@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  role         Role     @default(HR)
+  createdAt    DateTime @default(now())
+}
+
+enum Role {
+  SUPER_ADMIN
+  HR
+}
+
+model Department {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  employees Employee[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Employee {
+  id             String          @id @default(uuid())
+  employeeCode   String          @unique
+  fullName       String
+  email          String?         @unique
+  phone          String?
+  departmentId   String
+  department     Department      @relation(fields: [departmentId], references: [id])
+  avatarUrl      String?
+  faceEmbedding  Float[]         // Mảng 512 số thực
+  isActive       Boolean         @default(true)
+  attendanceLogs AttendanceLog[]
+  leaves         Leave[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model AttendanceLog {
+  id              String   @id @default(uuid())
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id])
+  checkTime       DateTime @default(now())
+  type            LogType
+  status          Status   @default(ON_TIME)
+  snapshotUrl     String?
+  confidenceScore Float?
+  createdAt       DateTime @default(now())
+}
+
+enum LogType {
+  IN
+  OUT
+}
+
+enum Status {
+  ON_TIME
+  LATE
+}
+
+model Shift {
+  id               String   @id @default(uuid())
+  name             String
+  startTime        String
+  endTime          String
+  color            String   @default("blue")
+  lateAfterMinutes Int      @default(15)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Leave {
+  id           String      @id @default(uuid())
+  employeeId   String
+  employee     Employee    @relation(fields: [employeeId], references: [id])
+  type         String
+  from         String
+  to           String
+  days         Int
+  reason       String?
+  status       LeaveStatus @default(PENDING)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  title        String
+  content      String
+  createdAt    DateTime @default(now())
+}
