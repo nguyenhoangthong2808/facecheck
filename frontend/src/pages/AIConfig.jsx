@@ -78,8 +78,8 @@ const AIConfig = () => {
       {/* Tiêu đề + Toggle chế độ */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Cấu hình Camera AI</h2>
-          <p className="text-slate-500 mt-1">Nhận diện khuôn mặt và điểm danh nhân viên trong thời gian thực.</p>
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Điểm danh Camera AI</h2>
+          <p className="text-slate-500 mt-1">Sử dụng nhận diện khuôn mặt để điểm danh vào/ra ca.</p>
         </div>
 
         {/* Toggle Vào ca / Ra ca */}

@@ -44,13 +44,13 @@ const Payroll = () => {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-4 py-2 shadow-sm">
-            <button onClick={prevMonth} className="text-slate-400 hover:text-slate-700 transition-colors"><ChevronLeft size={18}/></button>
+            <button onClick={prevMonth} className="text-slate-400 hover:text-slate-700 transition-colors"><ChevronLeft size={18} /></button>
             <span className="text-sm font-semibold text-slate-900 w-28 text-center">Tháng {month}/{year}</span>
-            <button onClick={nextMonth} className="text-slate-400 hover:text-slate-700 transition-colors"><ChevronRight size={18}/></button>
+            <button onClick={nextMonth} className="text-slate-400 hover:text-slate-700 transition-colors"><ChevronRight size={18} /></button>
           </div>
           {user?.role !== 'EMPLOYEE' && (
             <button onClick={exportCSV} className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm shadow-blue-200">
-              <Download size={16}/> Xuất Excel
+              <Download size={16} /> Xuất Excel
             </button>
           )}
         </div>
@@ -69,7 +69,7 @@ const Payroll = () => {
           { label: 'Lương trung bình', value: payrollData?.length ? fmt(totalPayroll / payrollData.length) : '—', icon: TrendingUp, color: 'purple' },
         ]).map(s => (
           <div key={s.label} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <div className={`bg-${s.color}-50 p-2 rounded-lg text-${s.color}-600 w-fit mb-3`}><s.icon size={20}/></div>
+            <div className={`bg-${s.color}-50 p-2 rounded-lg text-${s.color}-600 w-fit mb-3`}><s.icon size={20} /></div>
             <p className="text-xl font-bold text-slate-900">{s.value}</p>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mt-1">{s.label}</p>
           </div>
@@ -79,7 +79,7 @@ const Payroll = () => {
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-100">
           <h3 className="font-semibold text-slate-900">Chi tiết — Tháng {month}/{year}</h3>
-          <p className="text-xs text-slate-500 mt-1">Đơn giá: 150.000 VNĐ/giờ · Làm thêm giờ: x1.5</p>
+          <p className="text-xs text-slate-500 mt-1">Đơn giá: 100.000 VNĐ/giờ · Làm thêm giờ: x1.5</p>
         </div>
         {loading ? <div className="p-8 text-center text-slate-500">Đang tính toán...</div> : (
           <div className="overflow-x-auto">
@@ -102,7 +102,7 @@ const Payroll = () => {
                   <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        {p.avatarUrl ? <img src={p.avatarUrl} alt={p.fullName} className="w-9 h-9 rounded-full object-cover border border-slate-200"/> : <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm border border-blue-200">{p.fullName.split(' ').map(n=>n[0]).join('').substring(0,2)}</div>}
+                        {p.avatarUrl ? <img src={p.avatarUrl} alt={p.fullName} className="w-9 h-9 rounded-full object-cover border border-slate-200" /> : <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm border border-blue-200">{p.fullName.split(' ').map(n => n[0]).join('').substring(0, 2)}</div>}
                         <div>
                           <div className="font-semibold text-slate-900 text-sm">{p.fullName}</div>
                           <div className="text-xs text-slate-500">{p.department}</div>

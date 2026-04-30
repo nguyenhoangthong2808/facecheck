@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { 
   LayoutDashboard, Users, Clock, Video, Search, Bell, Settings,
-  HelpCircle, LogOut, Fingerprint, CalendarDays, FileText, DollarSign, User
+  HelpCircle, LogOut, Fingerprint, CalendarDays, FileText, DollarSign, User, AlertCircle
 } from 'lucide-react';
 import useAuthStore from '../store/useAuthStore';
 
@@ -48,18 +48,21 @@ const MainLayout = () => {
 
   const navItems = user?.role === 'EMPLOYEE' ? [
     { name: 'Bảng tin cá nhân', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'Điểm danh AI', path: '/ai-config', icon: Video },
     { name: 'Đơn xin nghỉ phép', path: '/leaves', icon: FileText },
+    { name: 'Quên chấm công', path: '/exceptions', icon: AlertCircle },
     { name: 'Bảng lương', path: '/payroll', icon: DollarSign },
     { name: 'Hồ sơ cá nhân', path: '/profile', icon: User },
   ] : [
     { name: 'Tổng quan', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Nhân viên', path: '/employees', icon: Users },
     { name: 'Điểm danh', path: '/attendance', icon: Clock },
-    { name: 'Nhận diện AI', path: '/ai-config', icon: Video },
     { name: 'Quản lý ca', path: '/shifts', icon: CalendarDays },
     { name: 'Nghỉ phép', path: '/leaves', icon: FileText },
+    { name: 'Quên chấm công', path: '/exceptions', icon: AlertCircle },
     { name: 'Thông báo', path: '/notifications', icon: Bell },
     { name: 'Bảng lương', path: '/payroll', icon: DollarSign },
+    { name: 'Cấu hình', path: '/settings', icon: Settings },
   ];
 
   return (
@@ -104,12 +107,12 @@ const MainLayout = () => {
 
         {/* Thao tác cuối thanh bên */}
         <div className="p-4 border-t border-slate-100">
-          {user?.role !== 'EMPLOYEE' && (
+          {user?.role === 'EMPLOYEE' && (
             <button
               onClick={() => navigate('/ai-config')}
               className="w-full mb-4 bg-blue-700 hover:bg-blue-800 text-white flex items-center justify-center gap-2 py-2.5 rounded-xl transition-colors font-medium text-sm shadow-sm shadow-blue-200"
             >
-              ⚡ Quét nhanh
+              ⚡ Điểm danh Camera
             </button>
           )}
           <ul className="space-y-1">

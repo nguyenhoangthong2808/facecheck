@@ -13,6 +13,8 @@ import Notifications from './pages/Notifications';
 import useAuthStore from './store/useAuthStore';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import EmployeeProfileConfig from './pages/EmployeeProfileConfig';
+import Settings from './pages/Settings';
+import Exceptions from './pages/Exceptions';
 
 const PrivateRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -37,7 +39,9 @@ function App() {
           <Route path="payroll" element={<Payroll />} />
           <Route path="shifts" element={<Shifts />} />
           <Route path="leaves" element={<Leaves />} />
+          <Route path="exceptions" element={<Exceptions />} />
           <Route path="notifications" element={<Notifications />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
     </Router>

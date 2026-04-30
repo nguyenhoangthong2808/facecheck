@@ -121,7 +121,13 @@ const Shifts = () => {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between text-slate-600">
                   <span>Thời gian làm việc</span>
-                  <span className="font-semibold">{(() => { const [sh,sm] = shift.startTime.split(':').map(Number); const [eh,em] = shift.endTime.split(':').map(Number); return `${eh*60+em-sh*60-sm} phút`; })()}</span>
+                  <span className="font-semibold">{(() => { 
+                    const [sh,sm] = shift.startTime.split(':').map(Number); 
+                    const [eh,em] = shift.endTime.split(':').map(Number); 
+                    let duration = (eh * 60 + em) - (sh * 60 + sm);
+                    if (duration < 0) duration += 1440;
+                    return `${duration} phút`; 
+                  })()}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Cho phép trễ</span>

@@ -38,11 +38,21 @@ model Employee {
   department     Department      @relation(fields: [departmentId], references: [id])
   avatarUrl      String?
   faceEmbedding  Float[]         // Mảng 512 số thực
+  passwordHash   String?
+  pinCode        String?         // Mã PIN dự phòng
   isActive       Boolean         @default(true)
   attendanceLogs AttendanceLog[]
   leaves         Leave[]
+  exceptionReqs  ExceptionRequest[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+}
+
+model SystemConfig {
+  id               String   @id @default(uuid())
+  hourlyRate       Float    @default(100000)
+  standardHours    Float    @default(176)
+  updatedAt        DateTime @updatedAt
 }
 
 model AttendanceLog {
@@ -52,9 +62,22 @@ model AttendanceLog {
   checkTime       DateTime @default(now())
   type            LogType
   status          Status   @default(ON_TIME)
+  method          String   @default("FACE") // FACE, PIN, MANUAL
   snapshotUrl     String?
   confidenceScore Float?
   createdAt       DateTime @default(now())
+}
+
+model ExceptionRequest {
+  id           String      @id @default(uuid())
+  employeeId   String
+  employee     Employee    @relation(fields: [employeeId], references: [id])
+  type         LogType     // IN or OUT
+  checkTime    DateTime    // Thời gian xin điểm danh
+  reason       String
+  status       LeaveStatus @default(PENDING) // Tái sử dụng enum PENDING, APPROVED, REJECTED
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 }
 
 enum LogType {

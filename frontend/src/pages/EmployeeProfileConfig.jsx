@@ -6,9 +6,15 @@ import { User, Mail, Phone, ShieldCheck, ShieldAlert, Camera, UploadCloud, Refre
 
 const EmployeeProfileConfig = () => {
   const { user: employee, token, login } = useAuthStore();
-  const [form, setForm] = useState({ email: '', phone: '' });
+  const [form, setForm] = useState({ email: '', phone: '', avatarUrl: '' });
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
+
+  const fileInputRef = useRef(null);
+
+  const [pwdForm, setPwdForm] = useState({ currentPassword: '', newPassword: '' });
+  const [isSavingPwd, setIsSavingPwd] = useState(false);
+  const [pwdMsg, setPwdMsg] = useState(null);
 
   const webcamRef = useRef(null);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
@@ -17,22 +23,48 @@ const EmployeeProfileConfig = () => {
 
   useEffect(() => {
     if (employee) {
-      setForm({ email: employee.email || '', phone: employee.phone || '' });
+      setForm({ email: employee.email || '', phone: employee.phone || '', avatarUrl: employee.avatarUrl || '' });
     }
   }, [employee]);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setForm(f => ({ ...f, avatarUrl: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     setIsSaving(true);
     setSaveMsg(null);
     try {
-      const res = await axios.put('http://localhost:5000/api/portal/profile', form, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.put('http://localhost:5000/api/portal/update-profile', form, { headers: { Authorization: `Bearer ${token}` } });
       login({ ...employee, ...res.data.employee }, token);
       setSaveMsg({ type: 'success', text: 'Cập nhật thông tin thành công!' });
     } catch (err) {
       setSaveMsg({ type: 'error', text: err.response?.data?.error || 'Lỗi cập nhật' });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setIsSavingPwd(true);
+    setPwdMsg(null);
+    try {
+      await axios.post('http://localhost:5000/api/portal/change-password', pwdForm, { headers: { Authorization: `Bearer ${token}` } });
+      setPwdMsg({ type: 'success', text: 'Đổi mật khẩu thành công!' });
+      setPwdForm({ currentPassword: '', newPassword: '' });
+    } catch (err) {
+      setPwdMsg({ type: 'error', text: err.response?.data?.error || 'Lỗi đổi mật khẩu' });
+    } finally {
+      setIsSavingPwd(false);
     }
   };
 
@@ -46,7 +78,7 @@ const EmployeeProfileConfig = () => {
       const aiRes = await axios.post('http://localhost:8000/api/v1/extract', { image_base64: imageSrc });
       if (!aiRes.data.success) { setFaceError(aiRes.data.error || 'Không nhận diện được khuôn mặt'); return; }
       
-      await axios.put('http://localhost:5000/api/portal/face', { faceEmbedding: aiRes.data.embedding }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.put('http://localhost:5000/api/portal/update-face', { faceEmbedding: aiRes.data.embedding }, { headers: { Authorization: `Bearer ${token}` } });
       login({ ...employee, faceEnrolled: true }, token);
       setFaceMsg('Cập nhật khuôn mặt thành công! Bạn có thể sử dụng khuôn mặt này để điểm danh.');
     } catch (err) {
@@ -67,16 +99,23 @@ const EmployeeProfileConfig = () => {
           <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2"><User className="text-blue-600" size={20}/> Hồ sơ cá nhân</h3>
           
           <div className="flex items-center gap-4 mb-8">
-            {employee.avatarUrl ? (
-              <img src={employee.avatarUrl} alt="Avatar" className="w-20 h-20 rounded-2xl object-cover border border-slate-200 shadow-sm" />
-            ) : (
-              <div className="w-20 h-20 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-2xl border border-blue-200 shadow-sm">
-                {employee.fullName ? employee.fullName.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase() : 'NV'}
+            <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+              {form.avatarUrl ? (
+                <img src={form.avatarUrl} alt="Avatar" className="w-20 h-20 rounded-2xl object-cover border border-slate-200 shadow-sm transition-opacity group-hover:opacity-75" />
+              ) : (
+                <div className="w-20 h-20 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-2xl border border-blue-200 shadow-sm transition-opacity group-hover:opacity-75">
+                  {employee.fullName ? employee.fullName.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase() : 'NV'}
+                </div>
+              )}
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 rounded-2xl">
+                <Camera className="text-white" size={24} />
               </div>
-            )}
+              <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+            </div>
             <div>
               <h4 className="text-xl font-bold text-slate-900">{employee.fullName}</h4>
               <p className="text-sm text-slate-500">MNV: {employee.employeeCode} · {employee.department}</p>
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs text-blue-600 font-semibold hover:underline mt-1">Đổi ảnh đại diện</button>
             </div>
           </div>
 
@@ -97,6 +136,29 @@ const EmployeeProfileConfig = () => {
             </div>
             <button type="submit" disabled={isSaving} className="w-full py-3 bg-slate-900 hover:bg-black text-white font-semibold rounded-xl transition-colors shadow-sm disabled:opacity-60">
               {isSaving ? 'Đang lưu...' : 'Lưu thông tin'}
+            </button>
+          </form>
+        </div>
+
+        {/* Đổi mật khẩu */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-1 lg:col-span-2 xl:col-span-1">
+          <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2"><User className="text-blue-600" size={20}/> Đổi mật khẩu</h3>
+          {pwdMsg && (
+            <div className={`p-3 rounded-xl mb-6 text-sm font-medium ${pwdMsg.type === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+              {pwdMsg.text}
+            </div>
+          )}
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Mật khẩu hiện tại</label>
+              <input type="password" required value={pwdForm.currentPassword} onChange={e => setPwdForm(f => ({...f, currentPassword: e.target.value}))} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"/>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Mật khẩu mới</label>
+              <input type="password" required value={pwdForm.newPassword} onChange={e => setPwdForm(f => ({...f, newPassword: e.target.value}))} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"/>
+            </div>
+            <button type="submit" disabled={isSavingPwd} className="w-full py-3 bg-slate-900 hover:bg-black text-white font-semibold rounded-xl transition-colors shadow-sm disabled:opacity-60">
+              {isSavingPwd ? 'Đang lưu...' : 'Lưu mật khẩu'}
             </button>
           </form>
         </div>

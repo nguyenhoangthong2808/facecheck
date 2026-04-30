@@ -1,18 +1,13 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, Download, Users, CheckCircle2, Clock, Fingerprint, ChevronRight, Maximize2, Video } from 'lucide-react';
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import useAuthStore from '../store/useAuthStore';
 import EmployeeDashboard from './EmployeeDashboard';
 
-const data = [
-  { name: 'T2', value: 85 },
-  { name: 'T3', value: 88 },
-  { name: 'T4', value: 82 },
-  { name: 'T5', value: 95 },
-  { name: 'T6', value: 90 },
-];
+
 
 const nowDate = new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: 'long', year: 'numeric' });
 
@@ -29,7 +24,7 @@ const Dashboard = () => {
     const rows = [
       `Tổng nhân viên,${stats.totalEmployees}`,
       `Có mặt hôm nay,${stats.presentToday}`,
-      `Đi trễ/Vắng,${stats.lateOrAbsent}`,
+      `Đi trễ/Vắng,${stats.lateToday + stats.absentToday}`,
       `AI quét thành công,${stats.aiScanSuccess}%`,
     ].join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
@@ -41,18 +36,20 @@ const Dashboard = () => {
   const [stats, setStats] = useState({
     totalEmployees: 0,
     presentToday: 0,
-    lateOrAbsent: 0,
+    lateToday: 0,
+    absentToday: 0,
     aiScanSuccess: 0
   });
   const [feedData, setFeedData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [statsRes, feedRes] = await Promise.all([
-          axios.get('http://localhost:5000/api/dashboard/stats'),
-          axios.get('http://localhost:5000/api/dashboard/feed')
+          axios.get(`http://localhost:5000/api/dashboard/stats?date=${selectedDate}`),
+          axios.get(`http://localhost:5000/api/dashboard/feed?date=${selectedDate}`)
         ]);
         setStats(statsRes.data);
         setFeedData(feedRes.data);
@@ -63,7 +60,38 @@ const Dashboard = () => {
       }
     };
     fetchData();
-  }, []);
+
+    // ── Socket.io Listener ──
+    const socket = io('http://localhost:5000');
+    
+    socket.on('attendanceUpdate', (data) => {
+      console.log('📢 Real-time update:', data);
+      
+      // Cập nhật feedData (thêm vào đầu danh sách)
+      setFeedData(prev => [data.log, ...prev].slice(0, 15));
+      
+      // Cập nhật stats
+      setStats(prev => {
+        const newStats = { ...prev };
+        if (data.type === 'CHECKIN') {
+          newStats.presentToday += 1;
+          newStats.absentToday -= 1;
+          if (data.log.status === 'LATE') {
+            newStats.lateToday += 1;
+          }
+        }
+        // Tính lại AI Scan Success (ước tính đơn giản)
+        const currentConf = parseFloat(data.log.conf);
+        newStats.aiScanSuccess = +((prev.aiScanSuccess * 0.9 + currentConf * 0.1)).toFixed(1);
+        
+        return newStats;
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [selectedDate]);
 
   if (loading) return <div className="p-8 text-center text-slate-500">Đang tải dữ liệu từ máy chủ...</div>;
   return (
@@ -75,9 +103,14 @@ const Dashboard = () => {
           <p className="text-slate-500 mt-1">Chào buổi sáng, Admin. Đây là hoạt động nhận diện sinh trắc học hôm nay.</p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm text-sm font-medium text-slate-700">
-            <Calendar size={16} className="text-slate-400" />
-            {nowDate}
+          <div className="relative cursor-pointer">
+            <input 
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+            />
+            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           </div>
           <button onClick={exportReport} className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm shadow-blue-200">
             <Download size={16} />
@@ -105,7 +138,7 @@ const Dashboard = () => {
             <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600"><CheckCircle2 size={18} /></div>
           </div>
           <p className="text-3xl font-bold text-slate-900 mb-2">{stats.presentToday}</p>
-          <p className="text-sm text-slate-500">85.8% nhân lực hiện diện</p>
+          <p className="text-sm text-slate-500">{stats.totalEmployees ? ((stats.presentToday / stats.totalEmployees) * 100).toFixed(1) : 0}% nhân lực hiện diện</p>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -113,9 +146,9 @@ const Dashboard = () => {
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Đi trễ / Vắng mặt</h3>
             <div className="bg-red-50 p-2 rounded-lg text-red-600"><Clock size={18} /></div>
           </div>
-          <p className="text-3xl font-bold text-slate-900 mb-2">{stats.lateOrAbsent}</p>
+          <p className="text-3xl font-bold text-slate-900 mb-2">{stats.lateToday + stats.absentToday}</p>
           <p className="text-sm font-medium text-red-600 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span> 42 người đến trễ
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span> {stats.lateToday} người đến trễ
           </p>
         </div>
 
@@ -126,7 +159,7 @@ const Dashboard = () => {
           </div>
           <p className="text-3xl font-bold text-slate-900 mb-2">{stats.aiScanSuccess}%</p>
           <p className="text-sm font-medium text-blue-600 flex items-center gap-1">
-            <CheckCircle2 size={14} /> Độ tin cậy trung bình: 0.98
+            Dựa trên điểm tin cậy nhận diện
           </p>
         </div>
       </div>
@@ -159,7 +192,7 @@ const Dashboard = () => {
                   <div className="flex items-center gap-1 mt-1 justify-end">
                     <span className="bg-blue-100 text-blue-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md">{item.conf} ĐTC</span>
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${item.status === 'LATE' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {item.status === 'LATE' ? 'TRỄ' : 'ĐÚN GIỜ'}
+                      {item.type === 'IN' ? 'VÀO' : 'RA'} - {item.status === 'LATE' ? 'TRỄ' : 'ĐÚNG GIỜ'}
                     </span>
                   </div>
                 </div>
@@ -184,7 +217,7 @@ const Dashboard = () => {
               </div>
               <div className="h-40">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={data}>
+                  <AreaChart data={stats.trendData || []}>
                     <defs>
                       <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2}/>

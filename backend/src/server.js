@@ -4,6 +4,8 @@ const dotenv = require('dotenv');
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const http = require('http');
+const { Server } = require('socket.io');
 
 dotenv.config();
 const app = express();
@@ -14,7 +16,40 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// ── Real-time Socket.io Setup ──
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('🔌 Client connected:', socket.id);
+  socket.on('disconnect', () => console.log('🔌 Client disconnected:', socket.id));
+});
+
+// Middleware để gắn io vào req
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 // ── JWT Middleware (optional — chỉ dùng cho route có gắn authMiddleware) ──
+const adminAuth = (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Chưa đăng nhập' });
+  try {
+    const decoded = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    if (decoded.role !== 'SUPER_ADMIN' && decoded.role !== 'HR') return res.status(403).json({ error: 'Không có quyền truy cập Admin' });
+    req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token không hợp lệ' });
+  }
+};
+
 const authMiddleware = (req, res, next) => {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Chưa đăng nhập' });
@@ -75,7 +110,12 @@ app.post('/api/auth/login', async (req, res) => {
     // 2. Kiểm tra Nhân viên
     const emp = await prisma.employee.findUnique({ where: { employeeCode: username }, include: { department: true } });
     if (emp) {
-      if (password !== '123456' && password !== emp.employeeCode) return res.status(401).json({ error: 'Sai mật khẩu' });
+      if (emp.passwordHash) {
+        const isMatch = await bcrypt.compare(password, emp.passwordHash);
+        if (!isMatch) return res.status(401).json({ error: 'Sai mật khẩu' });
+      } else {
+        if (password !== '123456' && password !== emp.employeeCode) return res.status(401).json({ error: 'Sai mật khẩu' });
+      }
       if (!emp.isActive) return res.status(403).json({ error: 'Tài khoản đã bị vô hiệu hóa' });
       const token = jwt.sign({ id: emp.id, employeeCode: emp.employeeCode, role: 'EMPLOYEE' }, JWT_SECRET, { expiresIn: '1d' });
       return res.json({ message: 'Đăng nhập thành công', token, user: { id: emp.id, employeeCode: emp.employeeCode, role: 'EMPLOYEE', fullName: emp.fullName, avatarUrl: emp.avatarUrl, department: emp.department.name } });
@@ -88,27 +128,108 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ─────────── DASHBOARD ───────────
-app.get('/api/dashboard/stats', async (req, res) => {
+app.get('/api/dashboard/stats', adminAuth, async (req, res) => {
   try {
     const totalEmployees = await prisma.employee.count({ where: { isActive: true } });
-    const enrolled = await prisma.employee.count({ where: { isActive: true, faceEmbedding: { isEmpty: false } } });
-    res.json({ totalEmployees, presentToday: enrolled, lateOrAbsent: totalEmployees - enrolled, aiScanSuccess: 99.2 });
-  } catch {
-    res.json({ totalEmployees: 0, presentToday: 0, lateOrAbsent: 0, aiScanSuccess: 99.2 });
+    
+    let targetDate = new Date();
+    if (req.query.date) {
+      targetDate = new Date(req.query.date);
+    }
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(targetDate.getDate() + 1);
+
+    const todayLogs = await prisma.attendanceLog.findMany({
+      where: { checkTime: { gte: targetDate, lt: nextDay } }
+    });
+
+    // Tính số người hiện diện (có ít nhất 1 log IN hôm nay)
+    const presentEmpIds = new Set(todayLogs.filter(l => l.type === 'IN').map(l => l.employeeId));
+    const presentToday = presentEmpIds.size;
+    const absentToday = totalEmployees - presentToday;
+
+    // Tính số người đi trễ (có ít nhất 1 log LATE hôm nay)
+    const lateEmpIds = new Set(todayLogs.filter(l => l.status === 'LATE').map(l => l.employeeId));
+    const lateToday = lateEmpIds.size;
+
+    // Tính điểm AI tự tin trung bình
+    let aiScanSuccess = 99.2;
+    if (todayLogs.length > 0) {
+      const sumConf = todayLogs.reduce((acc, l) => acc + (l.confidenceScore || 0.99), 0);
+      aiScanSuccess = +((sumConf / todayLogs.length) * 100).toFixed(1);
+    }
+
+    // Calculate trend data for the last 5 days
+    const trendData = [];
+    for (let i = 4; i >= 0; i--) {
+      const d = new Date(targetDate);
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const nextDay = new Date(d);
+      nextDay.setDate(d.getDate() + 1);
+      
+      const dayLogs = await prisma.attendanceLog.findMany({
+        where: { checkTime: { gte: d, lt: nextDay } }
+      });
+      const dayPresent = new Set(dayLogs.filter(l => l.type === 'IN').map(l => l.employeeId)).size;
+      const rate = totalEmployees > 0 ? Math.round((dayPresent / totalEmployees) * 100) : 0;
+      
+      const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+      const dayName = days[d.getDay()];
+      trendData.push({ name: dayName, value: rate });
+    }
+
+    res.json({ totalEmployees, presentToday, absentToday, lateToday, aiScanSuccess, trendData });
+  } catch (err) {
+    console.error(err);
+    res.json({ totalEmployees: 0, presentToday: 0, absentToday: 0, lateToday: 0, aiScanSuccess: 0 });
   }
 });
 
-app.get('/api/dashboard/feed', (req, res) => {
-  res.json([
-    { name: 'Marcus Chen', role: 'Product Designer', id: '4920', time: '08:42 SA', conf: '99.4%', status: 'ON TIME', avatar: 'https://randomuser.me/api/portraits/men/44.jpg' },
-    { name: 'Sarah Jenkins', role: 'Operations Lead', id: '3105', time: '08:38 SA', conf: '98.1%', status: 'ON TIME', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
-    { name: 'David Miller', role: 'QA Engineer', id: '8821', time: '08:35 SA', conf: '97.8%', status: 'LATE', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
-    { name: 'Elena Rodriguez', role: 'HR Specialist', id: '1244', time: '08:29 SA', conf: '99.8%', status: 'ON TIME', avatar: 'https://randomuser.me/api/portraits/women/33.jpg' },
-  ]);
+app.get('/api/dashboard/feed', adminAuth, async (req, res) => {
+  try {
+    let targetDate = new Date();
+    if (req.query.date) {
+      targetDate = new Date(req.query.date);
+    }
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(targetDate.getDate() + 1);
+
+    const logs = await prisma.attendanceLog.findMany({
+      where: { checkTime: { gte: targetDate, lt: nextDay } },
+      orderBy: { checkTime: 'desc' },
+      take: 15,
+      include: { employee: { include: { department: true } } }
+    });
+
+    const feed = logs.map(log => {
+      const d = new Date(log.checkTime);
+      const hours = d.getHours().toString().padStart(2, '0');
+      const mins = d.getMinutes().toString().padStart(2, '0');
+      const timeStr = `${hours}:${mins}`;
+
+      return {
+        id: log.employee.employeeCode,
+        name: log.employee.fullName,
+        role: log.employee.department.name,
+        time: timeStr,
+        conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
+        status: log.status,
+        type: log.type,
+        avatar: log.employee.avatarUrl
+      };
+    });
+
+    res.json(feed);
+  } catch (err) {
+    res.status(500).json([]);
+  }
 });
 
 // ─────────── EMPLOYEES ───────────
-app.get('/api/employees', async (req, res) => {
+app.get('/api/employees', adminAuth, async (req, res) => {
   try {
     const { search, dept, status } = req.query;
     const where = { isActive: true };
@@ -140,7 +261,7 @@ app.get('/api/employees', async (req, res) => {
   }
 });
 
-app.post('/api/employees', async (req, res) => {
+app.post('/api/employees', adminAuth, async (req, res) => {
   try {
     const { employeeCode, fullName, email, phone, departmentId, faceEmbedding } = req.body;
     const dept = await prisma.department.findUnique({ where: { id: departmentId } });
@@ -156,13 +277,13 @@ app.post('/api/employees', async (req, res) => {
   }
 });
 
-app.put('/api/employees/:id', async (req, res) => {
+app.put('/api/employees/:id', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { employeeCode, fullName, email, phone, departmentId } = req.body;
+    const { employeeCode, fullName, email, phone, departmentId, faceEmbedding } = req.body;
     const employee = await prisma.employee.update({
       where: { id },
-      data: { employeeCode, fullName, email, phone, departmentId },
+      data: { employeeCode, fullName, email, phone, departmentId, faceEmbedding },
       include: { department: true }
     });
     res.json({ message: 'Cập nhật thành công', employee });
@@ -174,26 +295,41 @@ app.put('/api/employees/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/employees/:id', async (req, res) => {
+app.delete('/api/employees/:id', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    // Xóa tất cả các bản ghi liên quan trước
     await prisma.attendanceLog.deleteMany({ where: { employeeId: id } });
+    await prisma.leave.deleteMany({ where: { employeeId: id } });
+    await prisma.exceptionRequest.deleteMany({ where: { employeeId: id } });
+    
     await prisma.employee.delete({ where: { id } });
     res.json({ message: 'Xóa nhân viên thành công' });
   } catch (error) {
     console.error(error);
     if (error.code === 'P2025') return res.status(404).json({ error: 'Nhân viên không tồn tại' });
-    res.status(500).json({ error: 'Lỗi xóa nhân viên' });
+    res.status(500).json({ error: 'Lỗi xóa nhân viên. Vui lòng kiểm tra các ràng buộc dữ liệu.' });
   }
 });
 
 // ─────────── ATTENDANCE ───────────
-app.get('/api/attendance', async (req, res) => {
+app.get('/api/attendance', adminAuth, async (req, res) => {
   try {
+    const { date } = req.query;
+    let whereClause = {};
+    if (date) {
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      whereClause.checkTime = { gte: start, lte: end };
+    }
+
     const logs = await prisma.attendanceLog.findMany({
+      where: whereClause,
       include: { employee: { include: { department: true } } },
       orderBy: { checkTime: 'desc' },
-      take: 50,
+      take: 500,
     });
     if (logs.length > 0) {
       const formatted = logs.map(log => ({
@@ -230,10 +366,63 @@ app.post('/api/attendance/checkin', async (req, res) => {
     const now = new Date();
     const hour = now.getHours();
     const minute = now.getMinutes();
-    const isLate = hour > 8 || (hour === 8 && minute > 0);
+    
+    // Lấy ca làm việc để tính toán đi trễ
+    const shifts = await prisma.shift.findMany({ orderBy: { startTime: 'asc' } });
+    let isLate = false;
+    
+    if (shifts.length > 0) {
+      const currentMin = hour * 60 + minute;
+      let closestShift = shifts[0];
+      let minDiff = Infinity;
+
+      for (const s of shifts) {
+        const [sHr, sMin] = s.startTime.split(':').map(Number);
+        const startMin = sHr * 60 + sMin;
+        
+        let diff = currentMin - startMin;
+        if (diff > 720) diff -= 1440;
+        else if (diff < -720) diff += 1440;
+        
+        if (Math.abs(diff) < minDiff) {
+          minDiff = Math.abs(diff);
+          closestShift = s;
+        }
+      }
+
+      const [sHr, sMin] = closestShift.startTime.split(':').map(Number);
+      const allowedLate = closestShift.lateAfterMinutes || 0;
+      const startMin = sHr * 60 + sMin;
+
+      let checkinDiff = currentMin - startMin;
+      if (checkinDiff > 720) checkinDiff -= 1440;
+      else if (checkinDiff < -720) checkinDiff += 1440;
+
+      if (checkinDiff > allowedLate) {
+        isLate = true;
+      }
+    } else {
+      isLate = hour > 8 || (hour === 8 && minute > 0);
+    }
+
     const log = await prisma.attendanceLog.create({
       data: { employeeId, type, status: isLate ? 'LATE' : 'ON_TIME', confidenceScore: confidenceScore || 0.99 },
       include: { employee: { include: { department: true } } }
+    });
+
+    // Phát tín hiệu real-time
+    req.io.emit('attendanceUpdate', {
+      type: 'CHECKIN',
+      log: {
+        id: log.employee.employeeCode,
+        name: log.employee.fullName,
+        role: log.employee.department.name,
+        time: new Date(log.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
+        status: log.status,
+        type: 'IN',
+        avatar: log.employee.avatarUrl
+      }
     });
     res.json({
       message: 'Điểm danh thành công!',
@@ -287,7 +476,7 @@ app.post('/api/face/identify', async (req, res) => {
 });
 
 // ─────────── DEPARTMENTS ───────────
-app.get('/api/departments', async (req, res) => {
+app.get('/api/departments', adminAuth, async (req, res) => {
   try {
     res.json(await prisma.department.findMany());
   } catch {
@@ -296,29 +485,50 @@ app.get('/api/departments', async (req, res) => {
 });
 
 // ─────────── EMPLOYEE PROFILE ───────────
-app.get('/api/employees/:id', async (req, res) => {
+app.get('/api/employees/:id', adminAuth, async (req, res) => {
   try {
     const emp = await prisma.employee.findUnique({
       where: { id: req.params.id },
       include: { department: true }
     });
     if (!emp) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
-    const logs = await prisma.attendanceLog.findMany({
+    const allLogs = await prisma.attendanceLog.findMany({
       where: { employeeId: req.params.id },
-      orderBy: { checkTime: 'desc' },
-      take: 30
+      orderBy: { checkTime: 'asc' }
     });
-    const onTimeCount = logs.filter(l => l.status === 'ON_TIME').length;
-    const lateCount = logs.filter(l => l.status === 'LATE').length;
-    const totalHours = logs.length * 8; // mock: 8h/day
+    
+    let totalWorkHours = 0;
+    const logsByDay = {};
+    allLogs.forEach(l => {
+        const dateStr = new Date(l.checkTime).toISOString().split('T')[0];
+        if (!logsByDay[dateStr]) logsByDay[dateStr] = [];
+        logsByDay[dateStr].push(l);
+    });
+    
+    for (const dayLogs of Object.values(logsByDay)) {
+        let lastIn = null;
+        for (const log of dayLogs) {
+            if (log.type === 'IN') lastIn = log;
+            else if (log.type === 'OUT' && lastIn) {
+                const diffMs = new Date(log.checkTime) - new Date(lastIn.checkTime);
+                totalWorkHours += diffMs / 3600000;
+                lastIn = null;
+            }
+        }
+    }
+    
+    const inLogs = allLogs.filter(l => l.type === 'IN');
+    const onTimeCount = inLogs.filter(l => l.status === 'ON_TIME').length;
+    const lateCount = inLogs.filter(l => l.status === 'LATE').length;
+
     res.json({
       id: emp.id, employeeCode: emp.employeeCode, fullName: emp.fullName,
       email: emp.email, phone: emp.phone, avatarUrl: emp.avatarUrl,
       department: emp.department.name, departmentId: emp.departmentId,
       isActive: emp.isActive, faceEnrolled: emp.faceEmbedding?.length > 0,
       createdAt: emp.createdAt,
-      stats: { totalDays: logs.length, onTime: onTimeCount, late: lateCount, totalHours },
-      recentLogs: logs.map(l => ({
+      stats: { totalDays: Object.keys(logsByDay).length, onTime: onTimeCount, late: lateCount, totalHours: +totalWorkHours.toFixed(2) },
+      recentLogs: allLogs.reverse().slice(0, 30).map(l => ({
         id: l.id, type: l.type, status: l.status,
         checkTime: l.checkTime, confidenceScore: l.confidenceScore
       }))
@@ -350,6 +560,21 @@ app.post('/api/attendance/checkout', async (req, res) => {
       const diffMs = new Date(log.checkTime) - new Date(lastCheckin.checkTime);
       workHours = (diffMs / 3600000).toFixed(1);
     }
+
+    // Phát tín hiệu real-time
+    req.io.emit('attendanceUpdate', {
+      type: 'CHECKOUT',
+      log: {
+        id: employee.employeeCode,
+        name: employee.fullName,
+        role: employee.department.name,
+        time: new Date(log.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
+        status: 'ON_TIME',
+        type: 'OUT',
+        avatar: employee.avatarUrl
+      }
+    });
     res.json({
       message: 'Check-out thành công!',
       log: { id: log.id, checkTime: log.checkTime, type: 'OUT', workHours,
@@ -363,31 +588,86 @@ app.post('/api/attendance/checkout', async (req, res) => {
 });
 
 // ─────────── PAYROLL ───────────
-app.get('/api/payroll', async (req, res) => {
+app.get('/api/payroll', adminAuth, async (req, res) => {
   try {
     const { month = new Date().getMonth() + 1, year = new Date().getFullYear() } = req.query;
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
     const employees = await prisma.employee.findMany({ where: { isActive: true }, include: { department: true } });
-    const HOURLY_RATE = 150000; // VND/giờ
-    const WORK_HOURS_PER_DAY = 8;
+    
+    let config = await prisma.systemConfig.findFirst();
+    if (!config) config = await prisma.systemConfig.create({ data: {} });
+    const HOURLY_RATE = config.hourlyRate;
+    const STANDARD_HOURS = config.standardHours;
+    
     const payroll = await Promise.all(employees.map(async emp => {
       const logs = await prisma.attendanceLog.findMany({
-        where: { employeeId: emp.id, type: 'IN', checkTime: { gte: startDate, lte: endDate } }
+        where: { employeeId: emp.id, checkTime: { gte: startDate, lte: endDate } },
+        orderBy: { checkTime: 'asc' }
       });
-      const daysWorked = logs.length;
-      const onTime = logs.filter(l => l.status === 'ON_TIME').length;
-      const late = logs.filter(l => l.status === 'LATE').length;
-      const standardHours = daysWorked * WORK_HOURS_PER_DAY;
-      const overtimeHours = Math.max(0, standardHours - 176); // >176h/tháng = OT
+      
+      const leaves = await prisma.leave.findMany({
+        where: { employeeId: emp.id, status: 'APPROVED' }
+      });
+      let leaveHours = 0;
+      for (const lv of leaves) {
+        const lvStart = new Date(lv.from);
+        const lvEnd = new Date(lv.to);
+        lvStart.setHours(0,0,0,0);
+        lvEnd.setHours(23,59,59,999);
+        const maxStart = lvStart > startDate ? lvStart : startDate;
+        const minEnd = lvEnd < endDate ? lvEnd : endDate;
+        if (maxStart <= minEnd) {
+          const diffDays = Math.ceil((minEnd - maxStart) / (1000 * 60 * 60 * 24));
+          if (lv.type !== 'Nghỉ không lương') {
+            leaveHours += diffDays * 8; 
+          }
+        }
+      }
+      
+      let totalWorkHours = 0;
+      let onTime = 0;
+      let late = 0;
+      let daysWorked = 0;
+      
+      const logsByDay = {};
+      logs.forEach(l => {
+        const dateStr = new Date(l.checkTime).toISOString().split('T')[0];
+        if (!logsByDay[dateStr]) logsByDay[dateStr] = [];
+        logsByDay[dateStr].push(l);
+      });
+      
+      for (const [date, dayLogs] of Object.entries(logsByDay)) {
+        if (dayLogs.some(l => l.type === 'IN')) daysWorked++;
+        const firstIn = dayLogs.find(l => l.type === 'IN');
+        if (firstIn) {
+          if (firstIn.status === 'ON_TIME') onTime++;
+          if (firstIn.status === 'LATE') late++;
+        }
+        
+        let lastIn = null;
+        for (const log of dayLogs) {
+          if (log.type === 'IN') {
+            lastIn = log;
+          } else if (log.type === 'OUT' && lastIn) {
+            const diffMs = new Date(log.checkTime) - new Date(lastIn.checkTime);
+            totalWorkHours += diffMs / 3600000;
+            lastIn = null;
+          }
+        }
+      }
+      
+      const standardHours = +(totalWorkHours + leaveHours).toFixed(2);
+      const overtimeHours = Math.max(0, standardHours - STANDARD_HOURS);
       const baseSalary = standardHours * HOURLY_RATE;
       const overtimePay = overtimeHours * HOURLY_RATE * 1.5;
-      const totalSalary = baseSalary + overtimePay;
+      const totalSalary = Math.round(baseSalary + overtimePay);
+      
       return {
         id: emp.id, employeeCode: emp.employeeCode, fullName: emp.fullName,
         department: emp.department.name, avatarUrl: emp.avatarUrl,
-        daysWorked, onTime, late, standardHours, overtimeHours,
-        baseSalary, overtimePay, totalSalary
+        daysWorked: daysWorked + (leaveHours/8), onTime, late, standardHours, overtimeHours: +overtimeHours.toFixed(2),
+        baseSalary: Math.round(baseSalary), overtimePay: Math.round(overtimePay), totalSalary
       };
     }));
     res.json({ month: +month, year: +year, payroll });
@@ -398,14 +678,14 @@ app.get('/api/payroll', async (req, res) => {
 });
 
 // ─────────── SHIFTS (PostgreSQL) ───────────
-app.get('/api/shifts', async (req, res) => {
+app.get('/api/shifts', adminAuth, async (req, res) => {
   try {
     const shifts = await prisma.shift.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(shifts);
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.post('/api/shifts', async (req, res) => {
+app.post('/api/shifts', adminAuth, async (req, res) => {
   const { name, startTime, endTime, color = 'blue', lateAfterMinutes = 15 } = req.body;
   if (!name || !startTime || !endTime) return res.status(400).json({ error: 'Thiếu thông tin ca làm việc' });
   try {
@@ -414,14 +694,14 @@ app.post('/api/shifts', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.put('/api/shifts/:id', async (req, res) => {
+app.put('/api/shifts/:id', adminAuth, async (req, res) => {
   try {
     const shift = await prisma.shift.update({ where: { id: req.params.id }, data: req.body });
     res.json({ message: 'Cập nhật ca thành công', shift });
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.delete('/api/shifts/:id', async (req, res) => {
+app.delete('/api/shifts/:id', adminAuth, async (req, res) => {
   try {
     await prisma.shift.delete({ where: { id: req.params.id } });
     res.json({ message: 'Xóa ca thành công' });
@@ -429,7 +709,7 @@ app.delete('/api/shifts/:id', async (req, res) => {
 });
 
 // ─────────── LEAVES (PostgreSQL) ───────────
-app.get('/api/leaves', async (req, res) => {
+app.get('/api/leaves', authMiddleware, async (req, res) => {
   try {
     const leaves = await prisma.leave.findMany({
       include: { employee: { select: { fullName: true, avatarUrl: true } } },
@@ -452,7 +732,7 @@ app.get('/api/leaves', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.post('/api/leaves', async (req, res) => {
+app.post('/api/leaves', authMiddleware, async (req, res) => {
   const { employeeId, type, from, to, days, reason } = req.body;
   // If the admin uses the mock form, it doesn't have employeeId (frontend currently maps employeeName only). 
   // Wait, I updated the frontend to send employeeId if EMPLOYEE. For Admin, it might fail unless we fix it.
@@ -466,14 +746,14 @@ app.post('/api/leaves', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.put('/api/leaves/:id/approve', async (req, res) => {
+app.put('/api/leaves/:id/approve', adminAuth, async (req, res) => {
   try {
     const leave = await prisma.leave.update({ where: { id: req.params.id }, data: { status: 'APPROVED' } });
     res.json({ message: 'Đã duyệt đơn nghỉ phép', leave });
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.put('/api/leaves/:id/reject', async (req, res) => {
+app.put('/api/leaves/:id/reject', adminAuth, async (req, res) => {
   try {
     const leave = await prisma.leave.update({ where: { id: req.params.id }, data: { status: 'REJECTED' } });
     res.json({ message: 'Đã từ chối đơn nghỉ phép', leave });
@@ -491,6 +771,14 @@ app.post('/api/portal/login', async (req, res) => {
       include: { department: true }
     });
     if (!emp) return res.status(404).json({ error: 'Mã nhân viên không tồn tại' });
+    if (emp.passwordHash) {
+      const isMatch = await bcrypt.compare(req.body.password || '', emp.passwordHash);
+      if (!isMatch) return res.status(401).json({ error: 'Sai mật khẩu' });
+    } else {
+      if (req.body.password !== '123456' && req.body.password !== emp.employeeCode) {
+        return res.status(401).json({ error: 'Sai mật khẩu' });
+      }
+    }
     if (!emp.isActive) return res.status(403).json({ error: 'Tài khoản đã bị vô hiệu hóa' });
     const token = jwt.sign(
       { id: emp.id, employeeCode: emp.employeeCode, type: 'employee' },
@@ -541,10 +829,19 @@ app.get('/api/portal/me', employeeAuth, async (req, res) => {
       prisma.attendanceLog.findMany({ where: { employeeId: emp.id, type: 'IN', checkTime: { gte: startOfMonth } } }),
       prisma.attendanceLog.findMany({ where: { employeeId: emp.id }, orderBy: { checkTime: 'desc' }, take: 20 })
     ]);
-    const checkin  = todayLogs.find(l => l.type === 'IN');
+    let totalWorkHours = 0;
+    let lastIn = null;
+    for (const log of todayLogs) {
+        if (log.type === 'IN') lastIn = log;
+        else if (log.type === 'OUT' && lastIn) {
+            const diffMs = new Date(log.checkTime) - new Date(lastIn.checkTime);
+            totalWorkHours += diffMs / 3600000;
+            lastIn = null;
+        }
+    }
+    const checkin = todayLogs.find(l => l.type === 'IN');
     const checkout = [...todayLogs].reverse().find(l => l.type === 'OUT');
-    let workHours = null;
-    if (checkin && checkout) workHours = ((new Date(checkout.checkTime) - new Date(checkin.checkTime)) / 3600000).toFixed(1);
+    const workHours = totalWorkHours > 0 ? totalWorkHours.toFixed(2) : null;
     res.json({
       id: emp.id, employeeCode: emp.employeeCode, fullName: emp.fullName,
       email: emp.email, phone: emp.phone, avatarUrl: emp.avatarUrl,
@@ -562,10 +859,10 @@ app.get('/api/portal/me', employeeAuth, async (req, res) => {
 // Cập nhật thông tin cá nhân
 app.put('/api/portal/update-profile', employeeAuth, async (req, res) => {
   try {
-    const { fullName, email, phone } = req.body;
+    const { fullName, email, phone, avatarUrl } = req.body;
     const emp = await prisma.employee.update({
       where: { id: req.employeeId },
-      data: { fullName, email, phone },
+      data: { fullName, email, phone, avatarUrl },
       include: { department: true }
     });
     res.json({
@@ -579,11 +876,71 @@ app.put('/api/portal/update-profile', employeeAuth, async (req, res) => {
   }
 });
 
+// Đổi mật khẩu
+app.post('/api/portal/change-password', employeeAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const emp = await prisma.employee.findUnique({ where: { id: req.employeeId } });
+    if (emp.passwordHash) {
+      const isMatch = await bcrypt.compare(currentPassword, emp.passwordHash);
+      if (!isMatch) return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng' });
+    } else {
+      if (currentPassword !== '123456' && currentPassword !== emp.employeeCode) {
+        return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng' });
+      }
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await prisma.employee.update({ where: { id: emp.id }, data: { passwordHash: hash } });
+    res.json({ message: 'Đổi mật khẩu thành công' });
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Lỗi đổi mật khẩu' });
+  }
+});
+
 // Cập nhật khuôn mặt (embedding từ AI Service)
 app.put('/api/portal/update-face', employeeAuth, async (req, res) => {
   try {
     const { faceEmbedding } = req.body;
     if (!faceEmbedding || !Array.isArray(faceEmbedding)) return res.status(400).json({ error: 'Thiếu dữ liệu khuôn mặt' });
+    
+    // Hàm tính cosine similarity
+    const cosineSim = (a, b) => {
+      const dot = a.reduce((s, v, i) => s + v * b[i], 0);
+      const nA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+      const nB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
+      return dot / (nA * nB);
+    };
+
+    // Lấy thông tin nhân viên hiện tại
+    const currentEmp = await prisma.employee.findUnique({ where: { id: req.employeeId } });
+    if (!currentEmp) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+
+    // Kiểm tra 1: Nếu nhân viên đã từng đăng ký khuôn mặt, khuôn mặt mới phải giống khuôn mặt cũ (để chống gian lận/đăng ký hộ)
+    if (currentEmp.faceEmbedding && currentEmp.faceEmbedding.length > 0) {
+      if (currentEmp.faceEmbedding.length === faceEmbedding.length) {
+        const simToOld = cosineSim(faceEmbedding, currentEmp.faceEmbedding);
+        if (simToOld < 0.6) {
+          return res.status(400).json({ error: 'Khuôn mặt mới không khớp với dữ liệu đã đăng ký ban đầu. Nếu bạn là chủ tài khoản nhưng thay đổi diện mạo quá lớn, vui lòng liên hệ Admin/HR để reset.' });
+        }
+      }
+    }
+
+    // Kiểm tra 2: Không cho phép 1 khuôn mặt đăng ký cho nhiều tài khoản khác nhau
+    const allEmployees = await prisma.employee.findMany({
+      where: { isActive: true, faceEmbedding: { isEmpty: false } }
+    });
+
+    for (const emp of allEmployees) {
+      if (emp.id === req.employeeId) continue; // Bỏ qua bản thân
+      if (emp.faceEmbedding.length !== faceEmbedding.length) continue;
+      
+      const simToOther = cosineSim(faceEmbedding, emp.faceEmbedding);
+      if (simToOther >= 0.6) {
+        return res.status(400).json({ error: 'Khuôn mặt này đã được sử dụng bởi một tài khoản khác trong hệ thống. Vui lòng kiểm tra lại.' });
+      }
+    }
+
+    // Nếu qua được cả 2 bài kiểm tra -> Cho phép lưu
     await prisma.employee.update({ where: { id: req.employeeId }, data: { faceEmbedding } });
     res.json({ message: 'Cập nhật khuôn mặt thành công! Hệ thống AI sẽ nhận diện bạn từ lần sau.' });
   } catch (err) {
@@ -607,12 +964,19 @@ app.get('/api/kiosk/:id', async (req, res) => {
       where: { employeeId: emp.id, checkTime: { gte: today } },
       orderBy: { checkTime: 'asc' }
     });
-    const checkin  = todayLogs.find(l => l.type === 'IN');
-    const checkout = todayLogs.filter(l => l.type === 'OUT').pop();
-    let workHours = null;
-    if (checkin && checkout) {
-      workHours = ((new Date(checkout.checkTime) - new Date(checkin.checkTime)) / 3600000).toFixed(1);
+    let totalWorkHours = 0;
+    let lastIn = null;
+    for (const log of todayLogs) {
+        if (log.type === 'IN') lastIn = log;
+        else if (log.type === 'OUT' && lastIn) {
+            const diffMs = new Date(log.checkTime) - new Date(lastIn.checkTime);
+            totalWorkHours += diffMs / 3600000;
+            lastIn = null;
+        }
     }
+    const checkin = todayLogs.find(l => l.type === 'IN');
+    const checkout = todayLogs.filter(l => l.type === 'OUT').pop();
+    const workHours = totalWorkHours > 0 ? totalWorkHours.toFixed(2) : null;
 
     // Tháng này
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -648,14 +1012,14 @@ app.get('/api/kiosk/:id', async (req, res) => {
 });
 
 // ─────────── NOTIFICATIONS (PostgreSQL) ───────────
-app.get('/api/notifications', async (req, res) => {
+app.get('/api/notifications', authMiddleware, async (req, res) => {
   try {
     const notifs = await prisma.notification.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(notifs.map(n => ({ id: n.id, title: n.title, content: n.content, date: n.createdAt })));
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.post('/api/notifications', async (req, res) => {
+app.post('/api/notifications', adminAuth, async (req, res) => {
   const { title, content } = req.body;
   if (!title || !content) return res.status(400).json({ error: 'Thiếu tiêu đề hoặc nội dung' });
   try {
@@ -664,7 +1028,7 @@ app.post('/api/notifications', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
 });
 
-app.delete('/api/notifications/:id', async (req, res) => {
+app.delete('/api/notifications/:id', adminAuth, async (req, res) => {
   try {
     await prisma.notification.delete({ where: { id: req.params.id } });
     res.json({ message: 'Xóa thông báo thành công' });
@@ -672,8 +1036,109 @@ app.delete('/api/notifications/:id', async (req, res) => {
 });
 
 
+// ─────────── EXCEPTION REQUESTS ───────────
+app.get('/api/exceptions', authMiddleware, async (req, res) => {
+  try {
+    const reqs = await prisma.exceptionRequest.findMany({
+      include: { employee: { select: { fullName: true, avatarUrl: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
+    const formatted = reqs.map(r => ({
+      id: r.id, employeeName: r.employee.fullName, employeeId: r.employeeId, avatarUrl: r.employee.avatarUrl,
+      type: r.type, checkTime: r.checkTime, reason: r.reason, status: r.status.toLowerCase(), submittedAt: r.createdAt
+    }));
+    res.json(formatted);
+  } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
+});
+
+app.post('/api/exceptions', authMiddleware, async (req, res) => {
+  const { employeeId, type, checkTime, reason } = req.body;
+  if (!employeeId || !type || !checkTime) return res.status(400).json({ error: 'Thiếu thông tin yêu cầu' });
+  try {
+    const exc = await prisma.exceptionRequest.create({
+      data: { employeeId, type, checkTime: new Date(checkTime), reason: reason || '', status: 'PENDING' }
+    });
+    res.json({ message: 'Gửi yêu cầu thành công', exc });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Lỗi máy chủ' }); }
+});
+
+app.put('/api/exceptions/:id/approve', adminAuth, async (req, res) => {
+  try {
+    const exc = await prisma.exceptionRequest.findUnique({ where: { id: req.params.id } });
+    if (!exc || exc.status !== 'PENDING') return res.status(400).json({ error: 'Yêu cầu không hợp lệ' });
+    
+    await prisma.exceptionRequest.update({ where: { id: req.params.id }, data: { status: 'APPROVED' } });
+    
+    // Thêm vào AttendanceLog
+    const now = new Date(exc.checkTime);
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    
+    // Logic tính đi trễ
+    const shifts = await prisma.shift.findMany({ orderBy: { startTime: 'asc' } });
+    let isLate = false;
+    if (exc.type === 'IN') {
+        if (shifts.length > 0) {
+          const currentMin = hour * 60 + minute;
+          let closestShift = shifts[0];
+          let minDiff = Infinity;
+          for (const s of shifts) {
+            const [sHr, sMin] = s.startTime.split(':').map(Number);
+            const startMin = sHr * 60 + sMin;
+            let diff = currentMin - startMin;
+            if (diff > 720) diff -= 1440;
+            else if (diff < -720) diff += 1440;
+            if (Math.abs(diff) < minDiff) { minDiff = Math.abs(diff); closestShift = s; }
+          }
+          const [sHr, sMin] = closestShift.startTime.split(':').map(Number);
+          const allowedLate = closestShift.lateAfterMinutes || 0;
+          const startMin = sHr * 60 + sMin;
+          let checkinDiff = currentMin - startMin;
+          if (checkinDiff > 720) checkinDiff -= 1440;
+          else if (checkinDiff < -720) checkinDiff += 1440;
+          if (checkinDiff > allowedLate) isLate = true;
+        } else {
+          isLate = hour > 8 || (hour === 8 && minute > 0);
+        }
+    }
+    
+    await prisma.attendanceLog.create({
+      data: { employeeId: exc.employeeId, type: exc.type, status: isLate ? 'LATE' : 'ON_TIME', checkTime: exc.checkTime, method: 'MANUAL', confidenceScore: 1.0 }
+    });
+    res.json({ message: 'Đã duyệt yêu cầu bổ sung', exc });
+  } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
+});
+
+app.put('/api/exceptions/:id/reject', adminAuth, async (req, res) => {
+  try {
+    const exc = await prisma.exceptionRequest.update({ where: { id: req.params.id }, data: { status: 'REJECTED' } });
+    res.json({ message: 'Đã từ chối yêu cầu', exc });
+  } catch (err) { res.status(500).json({ error: 'Lỗi máy chủ' }); }
+});
+
+// ─────────── CONFIG (System Settings) ───────────
+app.get('/api/config', adminAuth, async (req, res) => {
+  try {
+    let config = await prisma.systemConfig.findFirst();
+    if (!config) config = await prisma.systemConfig.create({ data: {} });
+    res.json(config);
+  } catch (err) { res.status(500).json({ error: 'Lỗi' }); }
+});
+
+app.put('/api/config', adminAuth, async (req, res) => {
+  try {
+    const { hourlyRate, standardHours } = req.body;
+    let config = await prisma.systemConfig.findFirst();
+    if (config) {
+      config = await prisma.systemConfig.update({ where: { id: config.id }, data: { hourlyRate: +hourlyRate, standardHours: +standardHours } });
+    } else {
+      config = await prisma.systemConfig.create({ data: { hourlyRate: +hourlyRate, standardHours: +standardHours } });
+    }
+    res.json(config);
+  } catch (err) { res.status(500).json({ error: 'Lỗi' }); }
+});
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ BioHR Backend chạy tại cổng ${PORT}`));
+server.listen(PORT, () => console.log(`✅ BioHR Backend chạy tại cổng ${PORT} (với Socket.io)`));
 
 

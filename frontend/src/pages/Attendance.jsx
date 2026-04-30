@@ -19,11 +19,12 @@ const Attendance = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [activeTab, setActiveTab] = useState('log');
   const [page, setPage] = useState(1);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/attendance');
+        const response = await axios.get(`http://localhost:5000/api/attendance?date=${selectedDate}`);
         setAttendanceLogs(response.data);
       } catch (error) {
         console.error('Lỗi tải dữ liệu điểm danh:', error);
@@ -32,7 +33,7 @@ const Attendance = () => {
       }
     };
     fetchLogs();
-  }, []);
+  }, [selectedDate]);
 
   const exportCSV = () => {
     const header = 'Nhân viên,Vai trò,Trạng thái,Giờ vào,Ghi chú,Giờ ra,Độ tin cậy\n';
@@ -68,9 +69,15 @@ const Attendance = () => {
             <button onClick={() => setActiveTab('log')} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeTab === 'log' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Nhật ký chi tiết</button>
             <button onClick={() => setActiveTab('chart')} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeTab === 'chart' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Biểu đồ xu hướng</button>
           </div>
-          <button className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
-            <Calendar size={16} /> {new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-          </button>
+          <div className="relative cursor-pointer">
+            <input 
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+            />
+            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
           <button onClick={exportCSV} className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm shadow-blue-200">
             <Download size={16} /> Xuất báo cáo
           </button>

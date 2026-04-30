@@ -17,11 +17,12 @@
 - **Tính lương Tự động:** Tính lương dựa trên số giờ làm thực tế, giờ OT, trừ đi trễ và xuất ra file Excel.
 - **Gửi Thông báo:** Gửi các thông báo quan trọng đến toàn bộ nhân viên trong công ty.
 
-### 2. Dành cho Nhân viên (Employee Portal)
+### 2. Dành cho Nhân viên (Employee Portal) & Mobile App
 - **Bảng tin Cá nhân (Dashboard):** Xem ngay thống kê số ngày đi làm, đi trễ, và giờ check-in/out hôm nay.
-- **Quản lý Sinh trắc học:** Tự cập nhật khuôn mặt của mình thông qua webcam máy tính.
-- **Nghỉ phép:** Chủ động tạo đơn xin nghỉ phép và theo dõi trạng thái duyệt.
-- **Phiếu lương:** Xem chi tiết lương thưởng được nhận trong tháng.
+- **Chấm công Mobile (Kiosk Mode):** Biến máy tính bảng hoặc điện thoại thành máy chấm công nhận diện khuôn mặt chuyên nghiệp.
+- **Hỗ trợ Offline:** Lưu trữ dữ liệu chấm công cục bộ bằng SQLite khi mất kết nối và tự động đồng bộ khi có mạng.
+- **Quản lý Sinh trắc học:** Tự cập nhật khuôn mặt của mình thông qua webcam máy tính hoặc camera điện thoại.
+- **Nghỉ phép & Phiếu lương:** Chủ động tạo đơn xin nghỉ phép và xem chi tiết lương thưởng ngay trên thiết bị di động.
 
 ---
 
@@ -29,9 +30,10 @@
 
 Dự án được xây dựng theo kiến trúc Microservices gồm 3 thành phần chính:
 
-- **Frontend (Giao diện):** `React.js`, `Vite`, `Tailwind CSS`, `Zustand` (Quản lý State).
-- **Backend (API & Logic):** `Node.js`, `Express.js`, `Prisma ORM`, `PostgreSQL` (Lưu trữ dữ liệu).
-- **AI Service (Nhận diện khuôn mặt):** `Python`, `FastAPI`, `DeepFace` / `Face_recognition`.
+- **Frontend (Web):** `React.js`, `Vite`, `Tailwind CSS`, `Zustand`.
+- **Backend (API):** `Node.js`, `Express.js`, `Prisma ORM`, `PostgreSQL`, `Socket.io`.
+- **Mobile (App):** `React Native`, `Expo`, `SQLite` (Lưu trữ offline).
+- **AI Service:** `Python`, `FastAPI`, `DeepFace` / `Face_recognition`.
 
 ---
 
@@ -70,7 +72,9 @@ venv\Scripts\activate  # (Windows)
 pip install -r requirements.txt
 ```
 - Chạy AI API Server (Cổng mặc định: `8000`):
+
 ```bash
+.\venv\Scripts\activate
 python main.py
 ```
 
@@ -82,6 +86,16 @@ npm install
 npm run dev
 ```
 - Giao diện web sẽ chạy tại: `http://localhost:5173`
+
+### 5. Cài đặt Mobile App (Expo)
+Mở terminal thứ 4 và trỏ vào thư mục `mobile`:
+```bash
+cd mobile
+npm install
+npm start
+```
+- Sử dụng ứng dụng **Expo Go** (trên iOS/Android) để quét mã QR và trải nghiệm.
+- Để chạy giả lập: Nhấn `a` cho Android hoặc `i` cho iOS.
 
 ---
 

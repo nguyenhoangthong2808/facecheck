@@ -15,6 +15,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "biohr-ai", "message": "AI Service is running"}
+
 class ImagePayload(BaseModel):
     image_base64: str
 
@@ -43,8 +47,6 @@ def extract_face(payload: ImagePayload):
         img = decode_base64_image(payload.image_base64)
         
         # Trích xuất vector đặc trưng (Face Embedding)
-        # Sử dụng mô hình Facenet (hoặc ArcFace)
-        # enforce_detection=True sẽ báo lỗi nếu không tìm thấy mặt
         # Sử dụng mô hình Facenet và MTCNN để nhận diện chính xác hơn
         results = DeepFace.represent(
             img_path=img, 
@@ -57,14 +59,16 @@ def extract_face(payload: ImagePayload):
             return {"success": False, "error": "Không tìm thấy khuôn mặt trong ảnh"}
             
         # Lấy khuôn mặt đầu tiên (to nhất)
-        embedding = results[0]["embedding"]
-        bbox = results[0]["facial_area"]
+        face_data = results[0]
+            
+        embedding = face_data["embedding"]
+        bbox = face_data["facial_area"]
         
         return {
             "success": True,
             "embedding": embedding,
             "bbox": bbox,
-            "confidence": results[0].get("face_confidence", 0.99)
+            "confidence": face_data.get("face_confidence", 0.99),
         }
         
     except ValueError as ve:
