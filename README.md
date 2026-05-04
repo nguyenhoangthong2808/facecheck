@@ -56,7 +56,7 @@ npm install
 npx prisma db push
 ```
 - Chạy server (Cổng mặc định: `5000`):
-```bash
+py```bash
 npm run dev
 ```
 
@@ -66,7 +66,6 @@ Mở một terminal khác và trỏ vào thư mục `ai-service`:
 cd ai-service
 # Khởi tạo môi trường ảo (Khuyên dùng)
 python -m venv venv
-venv\Scripts\activate  # (Windows)
 # source venv/bin/activate # (Mac/Linux)
 
 pip install -r requirements.txt

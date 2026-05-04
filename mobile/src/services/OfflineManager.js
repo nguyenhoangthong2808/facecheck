@@ -41,7 +41,7 @@ export const syncLogs = async (backendUrl) => {
       await axios.post(`${backendUrl}${endpoint}`, {
         employeeId: log.employeeId,
         confidenceScore: log.confidenceScore,
-        timestamp: log.timestamp // Backend may need to handle custom timestamp
+        checkTime: log.timestamp 
       });
       
       // Delete synced log

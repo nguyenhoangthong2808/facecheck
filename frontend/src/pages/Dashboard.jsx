@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api/api';
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, Download, Users, CheckCircle2, Clock, Fingerprint, ChevronRight, Maximize2, Video } from 'lucide-react';
@@ -48,8 +48,8 @@ const Dashboard = () => {
     const fetchData = async () => {
       try {
         const [statsRes, feedRes] = await Promise.all([
-          axios.get(`http://localhost:5000/api/dashboard/stats?date=${selectedDate}`),
-          axios.get(`http://localhost:5000/api/dashboard/feed?date=${selectedDate}`)
+          api.get(`/dashboard/stats?date=${selectedDate}`),
+          api.get(`/dashboard/feed?date=${selectedDate}`)
         ]);
         setStats(statsRes.data);
         setFeedData(feedRes.data);
@@ -62,7 +62,8 @@ const Dashboard = () => {
     fetchData();
 
     // ── Socket.io Listener ──
-    const socket = io('http://localhost:5000');
+    const socketUrl = (api.defaults.baseURL || 'http://localhost:5000').replace('/api', '');
+    const socket = io(socketUrl);
     
     socket.on('attendanceUpdate', (data) => {
       console.log('📢 Real-time update:', data);
