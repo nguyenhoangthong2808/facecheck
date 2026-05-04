@@ -121,7 +121,7 @@ cd mobile
 npm run share
 ```
 
-*Lưu ý: Lệnh này sẽ tự động khởi động Expo Tunnel và 2 đường hầm (Backend + AI Service) với tên miền cố định. Bạn không cần chỉnh sửa bất kỳ file nào.*
+*Lưu ý: Lệnh này sử dụng **Cloudflare Tunnel** để tự động tạo đường hầm bảo mật. Script sẽ tự động lấy URL mới và cập nhật cấu hình API cho App Mobile. Bạn chỉ cần quét mã QR và bắt đầu sử dụng, không cần chỉnh sửa bất kỳ file nào.*
 
 ---
 ## 💡 Ghi chú dành cho nhà phát triển
