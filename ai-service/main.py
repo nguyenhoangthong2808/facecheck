@@ -33,6 +33,8 @@ def decode_base64_image(base64_string: str) -> np.ndarray:
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError("Không thể decode ảnh")
+        # Chuyển đổi từ BGR (OpenCV default) sang RGB (DeepFace/Standard)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         return img
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Lỗi format ảnh: {str(e)}")

@@ -61,6 +61,18 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+// ─────────── WELCOME ───────────
+app.get('/', (req, res) => res.send(`
+  <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+    <h1 style="color: #2563eb;">BioHR API Server</h1>
+    <p style="color: #64748b;">The backend is running smoothly.</p>
+    <div style="margin-top: 20px; padding: 20px; background: #f8fafc; border-radius: 12px; display: inline-block;">
+      <p>Health Check: <a href="/api/health">/api/health</a></p>
+      <p>Frontend: <a href="http://localhost:5173">http://localhost:5173</a></p>
+    </div>
+  </div>
+`));
+
 // ─────────── HEALTH ───────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'BioHR Backend is running' }));
 
@@ -481,7 +493,8 @@ app.post('/api/face/identify', async (req, res) => {
       const score = cosineSim(embedding, emp.faceEmbedding);
       if (score > bestScore) { bestScore = score; bestMatch = emp; }
     }
-    if (bestScore < 0.60 || !bestMatch) return res.json({ matched: false, confidence: +(bestScore * 100).toFixed(1), message: 'Không tìm thấy nhân viên khớp' });
+    console.log(`🎯 Best match found: ${bestMatch?.fullName} with score: ${bestScore.toFixed(4)}`);
+    if (bestScore < 0.55 || !bestMatch) return res.json({ matched: false, confidence: +(bestScore * 100).toFixed(1), message: 'Không tìm thấy nhân viên khớp' });
     res.json({
       matched: true,
       confidence: +(bestScore * 100).toFixed(1),

@@ -109,7 +109,7 @@ export default function App() {
 
     try {
       const state = await NetInfo.fetch();
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
 
       if (!state.isConnected) {
         // Chế độ Offline
@@ -186,7 +186,7 @@ export default function App() {
     setResult(null);
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
       
       // 1. Trích xuất embedding
       const aiRes = await axios.post(`${AI_SERVICE_URL}/api/v1/extract`, 

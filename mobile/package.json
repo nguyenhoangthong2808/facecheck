@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start --tunnel",
-    "share": "concurrently --raw \"npm start\" \"npx cloudflared tunnel --url http://localhost:5000\"",
+    "share": "node ../scripts/startTunnelAndExpo.js",
     "android": "expo start --android --tunnel",
     "ios": "expo start --ios --tunnel",
     "web": "expo start --web"
