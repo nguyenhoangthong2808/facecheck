@@ -7,9 +7,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { Picker } from '@react-native-picker/picker'; 
 import { ScrollView } from 'react-native';
 
-// ĐỊA CHỈ IP MÁY TÍNH CỦA BẠN (Đã lấy từ ipconfig)
-const BACKEND_URL = 'http://192.168.1.14:5000';
-const AI_SERVICE_URL = 'http://192.168.1.14:8000';
+import { BACKEND_URL, AI_SERVICE_URL, LT_HEADERS, API_TIMEOUT } from './src/config/api';
 
 export default function App() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -49,7 +47,11 @@ export default function App() {
     if (!adminToken) return;
     try {
       const res = await axios.get(`${BACKEND_URL}/api/employees`, {
-        headers: { Authorization: `Bearer ${adminToken}` }
+        headers: { 
+          Authorization: `Bearer ${adminToken}`,
+          ...LT_HEADERS
+        },
+        timeout: API_TIMEOUT
       });
       setEmployees(res.data);
     } catch (error) {
@@ -64,7 +66,10 @@ export default function App() {
   const handleLogin = async () => {
     setLoading(true);
     try {
-      const res = await axios.post(`${BACKEND_URL}/api/auth/login`, { username, password });
+      const res = await axios.post(`${BACKEND_URL}/api/auth/login`, 
+        { username, password },
+        { headers: LT_HEADERS, timeout: API_TIMEOUT }
+      );
       if (res.data.token && (res.data.user.role === 'SUPER_ADMIN' || res.data.user.role === 'HR')) {
         setAdminToken(res.data.token);
         setShowLogin(false);
@@ -104,7 +109,7 @@ export default function App() {
 
     try {
       const state = await NetInfo.fetch();
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
 
       if (!state.isConnected) {
         // Chế độ Offline
@@ -120,9 +125,10 @@ export default function App() {
 
       // 2. Trích xuất khuôn mặt (AI Service)
       setStatus('Đang phân tích khuôn mặt (AI)...');
-      const aiRes = await axios.post(`${AI_SERVICE_URL}/api/v1/extract`, {
-        image_base64: photo.base64
-      });
+      const aiRes = await axios.post(`${AI_SERVICE_URL}/api/v1/extract`, 
+        { image_base64: photo.base64 },
+        { headers: LT_HEADERS, timeout: API_TIMEOUT }
+      );
       
       if (!aiRes.data.success) {
         setResult({ type: 'error', message: aiRes.data.error || 'Không nhận diện được khuôn mặt.' });
@@ -132,9 +138,10 @@ export default function App() {
 
       // 3. Nhận diện nhân viên (Node.js Backend)
       setStatus('Đang tìm kiếm hồ sơ nhân viên...');
-      const idRes = await axios.post(`${BACKEND_URL}/api/face/identify`, {
-        embedding: aiRes.data.embedding
-      });
+      const idRes = await axios.post(`${BACKEND_URL}/api/face/identify`, 
+        { embedding: aiRes.data.embedding },
+        { headers: LT_HEADERS, timeout: API_TIMEOUT }
+      );
       
       if (!idRes.data.matched) {
         setResult({ type: 'error', message: 'Khuôn mặt không có trong hệ thống.' });
@@ -152,7 +159,7 @@ export default function App() {
         employeeId: employee.id,
         confidenceScore: idRes.data.confidence / 100,
         type: checkType
-      });
+      }, { headers: LT_HEADERS, timeout: API_TIMEOUT });
 
       setResult({
         type: 'success',
@@ -179,12 +186,13 @@ export default function App() {
     setResult(null);
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
       
       // 1. Trích xuất embedding
-      const aiRes = await axios.post(`${AI_SERVICE_URL}/api/v1/extract`, {
-        image_base64: photo.base64
-      });
+      const aiRes = await axios.post(`${AI_SERVICE_URL}/api/v1/extract`, 
+        { image_base64: photo.base64 },
+        { headers: LT_HEADERS, timeout: API_TIMEOUT }
+      );
 
       if (!aiRes.data.success) {
         setResult({ type: 'error', message: aiRes.data.error });
@@ -196,7 +204,11 @@ export default function App() {
       await axios.put(`${BACKEND_URL}/api/employees/${selectedEmployee}`, {
         faceEmbedding: aiRes.data.embedding
       }, {
-        headers: { Authorization: `Bearer ${adminToken}` }
+        headers: { 
+          Authorization: `Bearer ${adminToken}`,
+          ...LT_HEADERS
+        },
+        timeout: API_TIMEOUT
       });
 
       setResult({ type: 'success', message: 'Đăng ký khuôn mặt thành công!' });

@@ -38,20 +38,22 @@ def decode_base64_image(base64_string: str) -> np.ndarray:
         raise HTTPException(status_code=400, detail=f"Lỗi format ảnh: {str(e)}")
 
 @app.get("/health")
-def health_check():
+def health_check_v1():
     return {"status": "ok", "service": "AI Facial Recognition"}
 
 @app.post("/api/v1/extract")
 def extract_face(payload: ImagePayload):
+    print("📥 Received extraction request...")
     try:
         img = decode_base64_image(payload.image_base64)
+        print("🖼️ Image decoded successfully.")
         
         # Trích xuất vector đặc trưng (Face Embedding)
         # Sử dụng mô hình Facenet và MTCNN để nhận diện chính xác hơn
         results = DeepFace.represent(
             img_path=img, 
             model_name="Facenet", 
-            detector_backend="mtcnn", 
+            detector_backend="opencv", 
             enforce_detection=True
         )
         
@@ -64,6 +66,7 @@ def extract_face(payload: ImagePayload):
         embedding = face_data["embedding"]
         bbox = face_data["facial_area"]
         
+        print(f"✅ Extraction successful. Confidence: {face_data.get('face_confidence', 0.99)}")
         return {
             "success": True,
             "embedding": embedding,
@@ -72,6 +75,7 @@ def extract_face(payload: ImagePayload):
         }
         
     except ValueError as ve:
+        print("❌ Face not detected.")
         # DeepFace quăng ValueError nếu không thấy khuôn mặt
         return {"success": False, "error": "Không nhận diện được khuôn mặt. Vui lòng thử lại gần camera hơn."}
     except Exception as e:

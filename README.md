@@ -113,6 +113,17 @@ npm start
 
 ---
 
+## 🌐 Chia sẻ qua Internet (Public Tunnel)
+Nếu bạn muốn chia sẻ ứng dụng Mobile cho người ở xa hoặc dùng qua 4G/khác mạng Wi-Fi, chỉ cần chạy **duy nhất 1 lệnh** tại thư mục `mobile`:
+
+```bash
+cd mobile
+npm run share
+```
+
+*Lưu ý: Lệnh này sẽ tự động khởi động Expo Tunnel và 2 đường hầm (Backend + AI Service) với tên miền cố định. Bạn không cần chỉnh sửa bất kỳ file nào.*
+
+---
 ## 💡 Ghi chú dành cho nhà phát triển
 - Ứng dụng yêu cầu cấp quyền Camera trên trình duyệt để sử dụng tính năng **Đăng ký khuôn mặt** (ở trang Hồ sơ) và **AI Kiosk**.
 - Database được quản lý bằng Prisma, mọi thay đổi cấu trúc bảng cần chỉnh sửa trong `backend/prisma/schema.prisma` và chạy lại `npx prisma db push`.

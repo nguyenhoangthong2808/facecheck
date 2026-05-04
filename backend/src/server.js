@@ -64,6 +64,23 @@ const authMiddleware = (req, res, next) => {
 // ─────────── HEALTH ───────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'BioHR Backend is running' }));
 
+// ─────────── AI PROXY ───────────
+// Proxy requests to AI Service (localhost:8000) to avoid needing multiple tunnels
+app.post('/api/v1/extract', async (req, res) => {
+  try {
+    const response = await fetch('http://localhost:8000/api/v1/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('AI Proxy Error:', error);
+    res.status(500).json({ success: false, error: 'AI Service không phản hồi' });
+  }
+});
+
 // ─────────── SEED ───────────
 app.post('/api/seed', async (req, res) => {
   try {
@@ -443,6 +460,7 @@ app.post('/api/attendance/checkin', async (req, res) => {
 
 // ─────────── FACE IDENTIFY ───────────
 app.post('/api/face/identify', async (req, res) => {
+  console.log('🔍 Received identify request...');
   try {
     const { embedding } = req.body;
     if (!embedding || !Array.isArray(embedding)) return res.status(400).json({ error: 'Thiếu embedding vector' });
