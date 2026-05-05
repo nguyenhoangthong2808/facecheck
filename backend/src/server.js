@@ -91,7 +91,7 @@ app.post('/api/v1/extract', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body),
-      signal: AbortSignal.timeout(15000) // Timeout sau 15 giây
+      signal: AbortSignal.timeout(60000) // Tăng lên 60 giây cho máy cấu hình thấp
     });
 
     if (!response.ok) {
@@ -266,11 +266,24 @@ app.get('/api/dashboard/feed', adminAuth, async (req, res) => {
       include: { employee: { include: { department: true } } }
     });
 
-    const feed = logs.map(log => {
+    const feed = await Promise.all(logs.map(async log => {
       const d = new Date(log.checkTime);
       const hours = d.getHours().toString().padStart(2, '0');
       const mins = d.getMinutes().toString().padStart(2, '0');
       const timeStr = `${hours}:${mins}`;
+
+      let workHours = null;
+      if (log.type === 'OUT') {
+        const startOfDay = new Date(d);
+        startOfDay.setHours(0, 0, 0, 0);
+        const inLog = await prisma.attendanceLog.findFirst({
+          where: { employeeId: log.employeeId, type: 'IN', checkTime: { gte: startOfDay, lte: d } },
+          orderBy: { checkTime: 'asc' }
+        });
+        if (inLog) {
+          workHours = ((d - new Date(inLog.checkTime)) / 3600000).toFixed(1);
+        }
+      }
 
       return {
         id: log.employee.employeeCode,
@@ -280,9 +293,10 @@ app.get('/api/dashboard/feed', adminAuth, async (req, res) => {
         conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
         status: log.status,
         type: log.type,
-        avatar: log.employee.avatarUrl
+        avatar: log.employee.avatarUrl,
+        workHours
       };
-    });
+    }));
 
     res.json(feed);
   } catch (err) {
@@ -499,6 +513,8 @@ app.get('/api/attendance', adminAuth, async (req, res) => {
         checkIn: inLog ? new Date(inLog.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—',
         checkInStatus: inLog ? (inLog.status === 'ON_TIME' ? 'Đúng giờ' : 'Trễ giờ') : '—',
         checkOut: outLog ? new Date(outLog.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—',
+        checkOutStatus: outLog ? (outLog.status === 'ON_TIME' ? 'Đúng giờ' : 'Về sớm') : '—',
+        workHours: (inLog && outLog) ? ((new Date(outLog.checkTime) - new Date(inLog.checkTime)) / 3600000).toFixed(1) : null,
         conf: Math.round(maxConf * 100),
         avatar: employee.avatarUrl || 'https://randomuser.me/api/portraits/lego/1.jpg',
       };
@@ -627,41 +643,48 @@ app.post('/api/attendance/checkout', async (req, res) => {
     const hour = logTime.getHours();
     const minute = logTime.getMinutes();
 
-    // Lấy ca làm việc gần nhất để tính "về sớm"
+    // Lấy ca làm việc để tính "về sớm"
     const shifts = await prisma.shift.findMany();
     let isEarly = false;
     let assignedShift = null;
 
     if (shifts.length > 0) {
       const currentMin = hour * 60 + minute;
-      let minDiff = Infinity;
+      
+      // Tìm giờ vào (IN) đầu tiên trong ngày hôm nay
+      const startOfDay = new Date(logTime);
+      startOfDay.setHours(0, 0, 0, 0);
+      const inLog = await prisma.attendanceLog.findFirst({
+        where: { employeeId, type: 'IN', checkTime: { gte: startOfDay, lte: logTime } },
+        orderBy: { checkTime: 'asc' }
+      });
 
-      for (const s of shifts) {
-        const [eHr, eMin] = s.endTime.split(':').map(Number);
-        const endMin = eHr * 60 + eMin;
-
-        let diff = currentMin - endMin;
-        if (diff > 720) diff -= 1440;
-        else if (diff < -720) diff += 1440;
-
-        if (Math.abs(diff) < minDiff) {
-          minDiff = Math.abs(diff);
-          assignedShift = s;
-        }
+      if (inLog) {
+        // Nếu đã có giờ vào, tìm ca có giờ BẮT ĐẦU gần nhất với giờ vào đó
+        const inTime = new Date(inLog.checkTime);
+        const inMin = inTime.getHours() * 60 + inTime.getMinutes();
+        
+        assignedShift = shifts.reduce((prev, curr) => {
+          const [pH, pM] = prev.startTime.split(':').map(Number);
+          const [cH, cM] = curr.startTime.split(':').map(Number);
+          return Math.abs(cH * 60 + cM - inMin) < Math.abs(pH * 60 + pM - inMin) ? curr : prev;
+        });
+      } else {
+        // Nếu không có giờ vào (quên quẹt sáng), tìm ca có giờ kết thúc gần nhất với hiện tại
+        assignedShift = shifts.reduce((prev, curr) => {
+          const [pHe, pMe] = prev.endTime.split(':').map(Number);
+          const [cHe, cMe] = curr.endTime.split(':').map(Number);
+          return Math.abs(cHe * 60 + cMe - currentMin) < Math.abs(pHe * 60 + pMe - currentMin) ? curr : prev;
+        });
       }
 
       if (assignedShift) {
         const [eHr, eMin] = assignedShift.endTime.split(':').map(Number);
         const endMin = eHr * 60 + eMin;
-        
-        let checkoutDiff = currentMin - endMin;
-        if (checkoutDiff > 720) checkoutDiff -= 1440;
-        else if (checkoutDiff < -720) checkoutDiff += 1440;
-
-        if (checkoutDiff < -5) { // Về sớm hơn 5 phút so với kết thúc ca
+        if (currentMin < endMin) {
           isEarly = true;
         }
-        console.log(`📌 OUT: Closest Shift: ${assignedShift.name}, End: ${assignedShift.endTime}, Diff: ${checkoutDiff}m, Early: ${isEarly}`);
+        console.log(`📌 OUT: Matched Shift: ${assignedShift.name}, End: ${assignedShift.endTime}, Current: ${hour}:${minute}, Early: ${isEarly}`);
       }
     }
 
@@ -742,7 +765,7 @@ app.post('/api/face/quick-scan', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image_base64 }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(60000)
     });
 
     if (!aiResponse.ok) {
@@ -793,7 +816,9 @@ app.post('/api/face/quick-scan', async (req, res) => {
       }
     }
 
-    if (bestScore < 0.55 || !bestMatch) {
+    console.log(`📊 Quick Scan - Best Match: ${bestMatch?.fullName}, Score: ${bestScore.toFixed(4)}`);
+
+    if (bestScore < 0.60 || !bestMatch) {
       return res.json({ matched: false, aiData, confidence: +(bestScore * 100).toFixed(1), message: 'Không tìm thấy nhân viên khớp' });
     }
 
@@ -858,10 +883,12 @@ app.post('/api/face/identify', async (req, res) => {
       if (score > bestScore) { bestScore = score; bestMatch = emp; }
     }
 
-    console.log(`📊 Similarity Scores (Length: ${embedding.length}):`, JSON.stringify(scores));
-    console.log(`🎯 Best match found: ${bestMatch?.fullName} with score: ${bestScore.toFixed(4)}`);
+    console.log(`\n--- 🔍 KẾT QUẢ NHẬN DIỆN TỪ MOBILE ---`);
+    console.log(`👤 Nhân viên gần giống nhất: ${bestMatch?.fullName || 'N/A'}`);
+    console.log(`📈 Độ tin cậy (Similarity): ${(bestScore * 100).toFixed(2)}%`);
+    console.log(`-------------------------------------\n`);
 
-    if (bestScore < 0.45 || !bestMatch) {
+    if (bestScore < 0.55 || !bestMatch) {
       return res.json({
         matched: false,
         confidence: +(bestScore * 100).toFixed(1),
@@ -944,60 +971,6 @@ app.get('/api/employees/:id', adminAuth, async (req, res) => {
   }
 });
 
-// ─────────── CHECK-OUT ───────────
-app.post('/api/attendance/checkout', async (req, res) => {
-  try {
-    const { employeeId, confidenceScore, checkTime } = req.body;
-    if (!employeeId) return res.status(400).json({ error: 'Thiếu employeeId' });
-    const employee = await prisma.employee.findUnique({ where: { id: employeeId }, include: { department: true } });
-    if (!employee) return res.status(404).json({ error: 'Nhân viên không tồn tại' });
-    // Tìm log check-in gần nhất trong ngày
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const lastCheckin = await prisma.attendanceLog.findFirst({
-      where: { employeeId, type: 'IN', checkTime: { gte: today } },
-      orderBy: { checkTime: 'desc' }
-    });
-    const log = await prisma.attendanceLog.create({
-      data: {
-        employeeId,
-        type: 'OUT',
-        status: 'ON_TIME',
-        confidenceScore: confidenceScore || 0.99,
-        checkTime: checkTime ? new Date(checkTime) : new Date()
-      }
-    });
-    let workHours = null;
-    if (lastCheckin) {
-      const diffMs = new Date(log.checkTime) - new Date(lastCheckin.checkTime);
-      workHours = (diffMs / 3600000).toFixed(1);
-    }
-
-    // Phát tín hiệu real-time
-    req.io.emit('attendanceUpdate', {
-      type: 'CHECKOUT',
-      log: {
-        id: employee.employeeCode,
-        name: employee.fullName,
-        role: employee.department.name,
-        time: new Date(log.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
-        status: 'ON_TIME',
-        type: 'OUT',
-        avatar: employee.avatarUrl
-      }
-    });
-    res.json({
-      message: 'Check-out thành công!',
-      log: {
-        id: log.id, checkTime: log.checkTime, type: 'OUT', workHours,
-        employee: { id: employee.id, fullName: employee.fullName, department: employee.department.name, avatarUrl: employee.avatarUrl }
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Lỗi check-out' });
-  }
-});
 
 // ─────────── PAYROLL ───────────
 app.get('/api/payroll', authMiddleware, async (req, res) => {

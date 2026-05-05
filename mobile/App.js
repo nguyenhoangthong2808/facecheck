@@ -162,8 +162,8 @@ export default function App() {
       const msg1 = 'Bước 1: Vui lòng nhìn thẳng vào camera trong 3 giây';
       setStatus(msg1);
       speak(msg1);
-      await new Promise(r => setTimeout(r, 3000));
-      const img1 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+      await new Promise(r => setTimeout(r, 2000));
+      const img1 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
       capturedImg = img1.base64;
 
       // Nếu offline, cho phép lưu offline luôn sau bước 1 (bỏ qua liveness check vì không có server)
@@ -187,14 +187,16 @@ export default function App() {
       const msg2 = 'Bước 2:Bây giờ hãy nháy mắt liên tục';
       setStatus(msg2);
       speak(msg2);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       const img2 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
 
       // Kiểm tra bước 2
       setStatus('Đang kiểm tra nháy mắt...');
       const check2 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img2.base64 }, { headers: LT_HEADERS });
-      if (check2.data.eyes !== 'CLOSED' && check2.data.ear > 0.22) {
-        throw new Error('Hệ thống không thấy bạn nháy mắt ở bước 2.');
+      if (check2.data.eyes !== 'CLOSED' && check2.data.ear > 0.25) { // Nới lỏng EAR từ 0.22 lên 0.25
+        console.log('Blink failed, but proceeding if EAR is low enough:', check2.data.ear);
+        // Nếu không phát hiện nhắm hẳn nhưng EAR giảm đáng kể, vẫn cho qua
+        if (check2.data.ear > 0.30) throw new Error('Hệ thống không thấy bạn nháy mắt ở bước 2.');
       }
 
       // BƯỚC 3: NGHIÊNG MẶT (4 GIÂY)
@@ -202,7 +204,7 @@ export default function App() {
       const msg3 = 'Bước 3: Nghiêng đầu sang một bên';
       setStatus(msg3);
       speak(msg3);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       const img3 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
 
       // Kiểm tra bước 3
@@ -289,10 +291,11 @@ export default function App() {
     try {
       // BƯỚC 1: NHÌN THẲNG (3 GIÂY)
       setLivenessStep(1);
-      const msg1 = `Bắt đầu đăng ký cho ${selectedEmployee.fullName}. Bước 1: Nhìn thẳng 3 giây.`;
+      const emp = employees.find(e => e.id === selectedEmployee);
+      const msg1 = `Bắt đầu đăng ký cho ${emp?.name || 'nhân viên'}. Bước 1: Nhìn thẳng 2 giây.`;
       setStatus(msg1);
       speak(msg1);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       const img1 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
 
       setStatus('Đang kiểm tra mẫu nhìn thẳng...');
@@ -306,13 +309,14 @@ export default function App() {
       const msg2 = 'Bước 2: Nháy mắt liên tục để xác thực người thật.';
       setStatus(msg2);
       speak(msg2);
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
       const img2 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
 
       setStatus('Đang kiểm tra nháy mắt...');
       const check2 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img2.base64 }, { headers: LT_HEADERS });
-      if (check2.data.eyes !== 'CLOSED' && check2.data.ear > 0.22) {
-        throw new Error('Đăng ký thất bại: Không nhận diện được hành động nháy mắt.');
+      if (check2.data.eyes !== 'CLOSED' && check2.data.ear > 0.25) {
+        console.log('Enrollment Blink logic check:', check2.data.ear);
+        if (check2.data.ear > 0.30) throw new Error('Đăng ký thất bại: Không nhận diện được hành động nháy mắt.');
       }
 
       // BƯỚC 3: NGHIÊNG MẶT (3 GIÂY)
@@ -344,7 +348,7 @@ export default function App() {
       }
 
       // 2. Cập nhật vào Backend
-      await axios.put(`${BACKEND_URL}/api/employees/${selectedEmployee.id}/face`, {
+      await axios.put(`${BACKEND_URL}/api/employees/${selectedEmployee}/face`, {
         faceEmbedding: aiRes.data.embedding
       }, {
         headers: {

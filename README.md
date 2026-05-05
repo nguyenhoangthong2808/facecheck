@@ -19,7 +19,9 @@
 
 ### 2. Dành cho Nhân viên (Employee Portal) & Mobile App
 - **Bảng tin Cá nhân (Dashboard):** Xem ngay thống kê số ngày đi làm, đi trễ, và giờ check-in/out hôm nay.
-- **Chấm công Mobile (Kiosk Mode):** Biến máy tính bảng hoặc điện thoại thành máy chấm công nhận diện khuôn mặt chuyên nghiệp.
+- **Chấm công Mobile (Kiosk Mode):** Biến máy tính bảng hoặc điện thoại thành máy chấm công nhận diện khuôn mặt chuyên nghiệp với quy trình Liveness (người thật) 3 bước.
+- **Logic Check-out Thông minh:** Tự động đối chiếu giờ ra với ca làm việc đã vào lúc sáng để xác định trạng thái "Về sớm" hoặc "Đúng giờ" chính xác đến từng phút.
+- **Tính toán Giờ làm thực tế:** Tự động hiển thị tổng số giờ làm việc (Work Hours) ngay khi nhân viên thực hiện Check-out, hiển thị real-time trên Dashboard.
 - **Hỗ trợ Offline:** Lưu trữ dữ liệu chấm công cục bộ bằng SQLite khi mất kết nối và tự động đồng bộ khi có mạng.
 - **Quản lý Sinh trắc học:** Tự cập nhật khuôn mặt của mình thông qua webcam máy tính hoặc camera điện thoại.
 - **Nghỉ phép & Phiếu lương:** Chủ động tạo đơn xin nghỉ phép và xem chi tiết lương thưởng ngay trên thiết bị di động.

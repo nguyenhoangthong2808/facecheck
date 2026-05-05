@@ -230,7 +230,7 @@ const Attendance = () => {
                 <thead>
                   <tr className="border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     <th className="p-4">Nhân viên</th><th className="p-4">Trạng thái</th>
-                    <th className="p-4">Giờ vào</th><th className="p-4">Giờ ra</th><th className="p-4">Độ tin cậy</th>
+                    <th className="p-4">Giờ vào</th><th className="p-4">Giờ ra</th><th className="p-4">Tổng giờ</th><th className="p-4">Độ tin cậy</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -260,7 +260,15 @@ const Attendance = () => {
                       </td>
                       <td className="p-4">
                         <div className="text-sm font-semibold text-slate-900">{log.checkOut}</div>
-                        {log.checkOut !== '—' && log.checkOut !== '--:--' && (['Early Leave', 'EARLY_LEAVE'].includes(log.status)) && <div className="text-[10px] text-blue-500 font-medium">Về sớm</div>}
+                        <div className={`text-xs ${log.checkOutStatus === 'Về sớm' ? 'text-blue-500 font-medium' : 'text-slate-500'}`}>{log.checkOutStatus}</div>
+                      </td>
+                      <td className="p-4">
+                        {log.workHours ? (
+                          <div className="inline-flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg">
+                            <Clock size={12} className="text-slate-500" />
+                            <span className="text-sm font-bold text-slate-700">{log.workHours}h</span>
+                          </div>
+                        ) : <span className="text-slate-300">—</span>}
                       </td>
 
                       <td className="p-4">

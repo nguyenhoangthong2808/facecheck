@@ -57,7 +57,7 @@ class LivenessDetector:
         right_ear = self.get_ear(landmarks, right_eye_indices)
         avg_ear = (left_ear + right_ear) / 2.0
         
-        eyes_status = "CLOSED" if avg_ear < 0.20 else "OPEN"
+        eyes_status = "CLOSED" if avg_ear < 0.22 else "OPEN" # Nới lỏng từ 0.20 lên 0.22
         
         # 2. Pose Detection
         nose = landmarks[1]
@@ -76,10 +76,10 @@ class LivenessDetector:
         dist_eyes_chin = abs(eyes_mid_y - chin.y)
         pitch_ratio = dist_nose_eyes / (dist_eyes_chin + 1e-6)
         
-        if yaw_ratio < 0.6: pose = "LEFT"
-        elif yaw_ratio > 1.6: pose = "RIGHT"
-        elif pitch_ratio < 0.25: pose = "UP"
-        elif pitch_ratio > 0.55: pose = "DOWN"
+        if yaw_ratio < 0.75: pose = "LEFT" # Nới lỏng từ 0.6
+        elif yaw_ratio > 1.35: pose = "RIGHT" # Nới lỏng từ 1.6
+        elif pitch_ratio < 0.35: pose = "UP" # Nới lỏng từ 0.25
+        elif pitch_ratio > 0.45: pose = "DOWN" # Nới lỏng từ 0.55
         else: pose = "CENTER"
             
         return {
