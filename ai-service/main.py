@@ -118,12 +118,22 @@ def extract_face(payload: ImagePayload):
         img = decode_base64_image(payload.image_base64)
         
         # 1. Trích xuất vector đặc trưng
-        results = DeepFace.represent(
-            img_path=img, 
-            model_name="Facenet", 
-            detector_backend="opencv", 
-            enforce_detection=True
-        )
+        try:
+            results = DeepFace.represent(
+                img_path=img, 
+                model_name="Facenet", 
+                detector_backend="mediapipe",
+                enforce_detection=True
+            )
+        except Exception:
+            # Nếu không tìm thấy mặt, thử lật ảnh lại (nhiều camera bị ngược)
+            img_flipped = cv2.flip(img, 1)
+            results = DeepFace.represent(
+                img_path=img_flipped, 
+                model_name="Facenet", 
+                detector_backend="mediapipe",
+                enforce_detection=True
+            )
         
         if not results or len(results) == 0:
             return {"success": False, "error": "Không tìm thấy khuôn mặt trong ảnh"}

@@ -22,6 +22,8 @@ const Employees = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [departments, setDepartments] = useState([]);
 
+  const [importing, setImporting] = useState(false);
+
   const fetchEmployees = async () => {
     try {
       setLoading(true);
@@ -31,6 +33,28 @@ const Employees = () => {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setImporting(true);
+      const res = await api.post('/employees/bulk-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      alert(res.data.message);
+      fetchEmployees();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Lỗi khi nhập dữ liệu');
+    } finally {
+      setImporting(false);
+      e.target.value = '';
     }
   };
 
@@ -107,6 +131,17 @@ const Employees = () => {
           <p className="text-slate-500 mt-1">Quản lý dữ liệu sinh trắc học và hồ sơ nhân sự của tổ chức.</p>
         </div>
         <div className="flex items-center gap-3">
+          <input
+            type="file"
+            id="csv-import"
+            className="hidden"
+            accept=".csv"
+            onChange={handleImport}
+            disabled={importing}
+          />
+          <label htmlFor="csv-import" className={`flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm cursor-pointer ${importing ? 'opacity-50 pointer-events-none' : ''}`}>
+            <Plus size={16} /> {importing ? 'Đang nhập...' : 'Nhập Excel'}
+          </label>
           <button onClick={exportCSV} className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-xl text-sm font-medium transition-colors shadow-sm">
             <Download size={16} /> Xuất Excel
           </button>
@@ -115,6 +150,7 @@ const Employees = () => {
           </button>
         </div>
       </div>
+
 
       {/* Thẻ thống kê */}
       <div className="grid grid-cols-4 gap-6">

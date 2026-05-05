@@ -178,7 +178,7 @@ const EmployeeProfileConfig = () => {
           <p className="text-sm text-slate-500 mb-4">Cập nhật khuôn mặt của bạn để hệ thống AI có thể nhận diện chính xác nhất khi điểm danh.</p>
 
           <div className="relative rounded-2xl overflow-hidden bg-slate-900 aspect-video flex items-center justify-center mb-4">
-            <Webcam audio={false} ref={webcamRef} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'user' }} className="w-full h-full object-cover" />
+            <Webcam audio={false} ref={webcamRef} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'user' }} mirrored={true} className="w-full h-full object-cover" />
 
             {isProcessingFace && (
               <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center text-white">

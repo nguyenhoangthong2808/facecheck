@@ -48,12 +48,12 @@ export default function App() {
     try {
       const voices = await Speech.getAvailableVoicesAsync();
       const vnVoices = voices.filter(v => v.language.includes('vi'));
-      
+
       // Tìm giọng Nam (Ưu tiên các tên giọng nam phổ biến trên Android/iOS)
-      const maleVoice = vnVoices.find(v => 
-        v.name.toLowerCase().includes('minh') || 
-        v.name.toLowerCase().includes('nam') || 
-        v.name.toLowerCase().includes('an') || 
+      const maleVoice = vnVoices.find(v =>
+        v.name.toLowerCase().includes('minh') ||
+        v.name.toLowerCase().includes('nam') ||
+        v.name.toLowerCase().includes('an') ||
         v.name.toLowerCase().includes('mạnh') ||
         v.name.toLowerCase().includes('male')
       ) || vnVoices[0];
@@ -151,8 +151,12 @@ export default function App() {
 
     setLoading(true);
     setResult(null);
+    let capturedImg = null;
 
     try {
+      // Kiểm tra kết nối mạng trước khi bắt đầu
+      const netState = await NetInfo.fetch();
+
       // BƯỚC 1: NHÌN THẲNG (3 GIÂY)
       setLivenessStep(1);
       const msg1 = 'Bước 1: Vui lòng nhìn thẳng vào camera trong 3 giây';
@@ -160,10 +164,20 @@ export default function App() {
       speak(msg1);
       await new Promise(r => setTimeout(r, 3000));
       const img1 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+      capturedImg = img1.base64;
 
-      // Kiểm tra bước 1
+      // Nếu offline, cho phép lưu offline luôn sau bước 1 (bỏ qua liveness check vì không có server)
+      if (!netState.isConnected) {
+        OfflineManager.saveLogOffline(capturedImg, checkType);
+        const offMsg = 'Đã lưu điểm danh ngoại tuyến. Dữ liệu sẽ tự động đồng bộ khi có mạng.';
+        setResult({ type: 'success', message: offMsg });
+        speak(offMsg);
+        return;
+      }
+
+      // Kiểm tra bước 1 (Online)
       setStatus('Đang kiểm tra tư thế nhìn thẳng...');
-      const check1 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img1.base64 }, { headers: LT_HEADERS });
+      const check1 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: capturedImg }, { headers: LT_HEADERS });
       if (!check1.data.face_detected || check1.data.pose !== 'CENTER') {
         throw new Error('Bạn chưa nhìn thẳng vào khung hình ở bước 1.');
       }
@@ -184,7 +198,7 @@ export default function App() {
       }
 
       // BƯỚC 3: NGHIÊNG MẶT (4 GIÂY)
-      setLivenessStep(4);
+      setLivenessStep(3);
       const msg3 = 'Bước 3: Nghiêng đầu sang một bên';
       setStatus(msg3);
       speak(msg3);
@@ -205,7 +219,7 @@ export default function App() {
 
       // Gửi ảnh 1 để nhận diện
       const aiRes = await axios.post(`${BACKEND_URL}/api/v1/extract`,
-        { image_base64: img1.base64 },
+        { image_base64: capturedImg },
         { headers: LT_HEADERS, timeout: API_TIMEOUT }
       );
 
@@ -236,7 +250,7 @@ export default function App() {
 
       const typeText = checkType === 'IN' ? 'Chào mừng' : 'Cảm ơn';
       let successMsg = `${typeText} ${employee.fullName} đã điểm danh thành công.`;
-      
+
       if (checkType === 'OUT' && attRes.data.log?.workHours) {
         successMsg += `\nThời gian làm việc: ${attRes.data.log.workHours} giờ.`;
       }
@@ -246,15 +260,25 @@ export default function App() {
 
     } catch (error) {
       console.log('Attendance process log:', error.message);
-      const errorMsg = error.response?.data?.error || error.message || 'Lỗi quy trình, vui lòng thử lại';
-      setResult({ type: 'error', message: errorMsg });
-      speak(errorMsg);
+
+      // Xử lý lỗi kết nối (Server chết hoặc mất mạng đột ngột)
+      if ((error.message.includes('Network Error') || error.code === 'ECONNABORTED') && capturedImg) {
+        OfflineManager.saveLogOffline(capturedImg, checkType);
+        const offMsg = 'Lỗi kết nối! Đã tự động lưu điểm danh ngoại tuyến.';
+        setResult({ type: 'success', message: offMsg });
+        speak(offMsg);
+      } else {
+        const errorMsg = error.response?.data?.error || error.message || 'Lỗi quy trình, vui lòng thử lại';
+        setResult({ type: 'error', message: errorMsg });
+        speak(errorMsg);
+      }
     } finally {
       setLoading(false);
       setLivenessStep(0);
       setStatus('Sẵn sàng điểm danh');
     }
   };
+
 
   const handleEnrollment = async () => {
     if (!cameraRef.current || !selectedEmployee || loading) return;
@@ -270,7 +294,7 @@ export default function App() {
       speak(msg1);
       await new Promise(r => setTimeout(r, 3000));
       const img1 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
-      
+
       setStatus('Đang kiểm tra mẫu nhìn thẳng...');
       const check1 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img1.base64 }, { headers: LT_HEADERS });
       if (!check1.data.face_detected || check1.data.pose !== 'CENTER') {
@@ -284,7 +308,7 @@ export default function App() {
       speak(msg2);
       await new Promise(r => setTimeout(r, 3000));
       const img2 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
-      
+
       setStatus('Đang kiểm tra nháy mắt...');
       const check2 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img2.base64 }, { headers: LT_HEADERS });
       if (check2.data.eyes !== 'CLOSED' && check2.data.ear > 0.22) {
@@ -298,7 +322,7 @@ export default function App() {
       speak(msg3);
       await new Promise(r => setTimeout(r, 3000));
       const img3 = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
-      
+
       setStatus('Đang kiểm tra góc nghiêng...');
       const check3 = await axios.post(`${BACKEND_URL}/api/v1/liveness-check`, { image_base64: img3.base64 }, { headers: LT_HEADERS });
       if (check3.data.pose === 'CENTER') {

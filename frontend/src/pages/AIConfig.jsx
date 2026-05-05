@@ -240,7 +240,7 @@ const AIConfig = () => {
           </div>
 
           <div className="relative rounded-xl overflow-hidden bg-slate-900 aspect-video flex items-center justify-center">
-            <Webcam audio={false} ref={webcamRef} screenshotFormat="image/jpeg" screenshotQuality={0.8} videoConstraints={{ width: 640, height: 480, facingMode: 'user' }} className="w-full h-full object-cover" />
+            <Webcam audio={false} ref={webcamRef} screenshotFormat="image/jpeg" screenshotQuality={0.8} videoConstraints={{ width: 640, height: 480, facingMode: 'user' }} mirrored={true} className="w-full h-full object-cover" />
 
             {isVerifying && (
               <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-md flex flex-col items-center justify-center text-white z-30 p-6 text-center">

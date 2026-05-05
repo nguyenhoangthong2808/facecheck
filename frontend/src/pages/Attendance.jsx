@@ -32,43 +32,89 @@ const Attendance = () => {
 
     // ── Socket.io Listener ──
     const socketUrl = (api.defaults.baseURL || 'http://localhost:5000').replace('/api', '');
-    const socket = io(socketUrl);
+    console.log('🔌 Connecting to socket at:', socketUrl);
     
-    socket.on('attendanceUpdate', (data) => {
-      console.log('📢 Attendance page update:', data);
-      
-      // Chỉ cập nhật nếu đang xem dữ liệu của ngày hôm nay
-      const today = new Date().toISOString().slice(0, 10);
-      if (selectedDate === today) {
-        // Chuyển đổi dữ liệu từ Socket sang định dạng bảng
-        const newLog = {
-          id: Date.now(),
-          name: data.log.name,
-          role: data.log.role,
-          avatar: data.log.avatar,
-          status: data.log.status === 'LATE' ? 'Late' : 'Present',
-          checkIn: data.log.time,
-          checkInStatus: data.log.status === 'LATE' ? '+ Muộn' : 'Đúng giờ',
-          checkOut: '--:--',
-          conf: parseFloat(data.log.conf),
-          type: data.log.type
-        };
+    const socket = io(socketUrl, {
+      transports: ['websocket', 'polling']
+    });
+    
+    socket.on('connect', () => {
+      console.log('✅ Connected to attendance socket:', socket.id);
+    });
 
+    socket.on('attendanceUpdate', (data) => {
+      console.log('📢 REAL-TIME EVENT RECEIVED:', data);
+      
+      const serverDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+      console.log(`Comparing view date [${selectedDate}] with today [${serverDate}]`);
+
+      if (selectedDate === serverDate) {
+        console.log('✅ Date matches, updating state...');
+        // Thử dùng alert để xác nhận (chỉ dùng khi debug)
+        // window.alert(`Nhận điểm danh: ${data.log.name} (${data.type})`);
+        
         setAttendanceLogs(prev => {
-          // Nếu là CHECKOUT, tìm log cũ và cập nhật
+          console.log('Current logs count:', prev.length);
+          // Nếu là CHECKOUT
           if (data.type === 'CHECKOUT') {
-            return prev.map(l => l.name === data.log.name ? { ...l, checkOut: data.log.time } : l);
+            const exists = prev.some(l => l.id === data.log.id);
+            if (exists) {
+              return prev.map(l => l.id === data.log.id ? { 
+                ...l, 
+                checkOut: data.log.time, 
+                status: data.log.status === 'EARLY_LEAVE' || data.log.status === 'Early Leave' ? 'Early Leave' : l.status,
+                workHours: data.log.workHours 
+              } : l);
+            }
+            return [{
+              id: data.log.id,
+              name: data.log.name,
+              role: data.log.role,
+              avatar: data.log.avatar,
+              status: ['Early Leave', 'EARLY_LEAVE'].includes(data.log.status) ? 'Early Leave' : 'Present',
+              checkIn: '--:--',
+              checkInStatus: '—',
+              checkOut: data.log.time,
+              conf: parseFloat(data.log.conf),
+              type: 'OUT'
+            }, ...prev];
           }
-          // Nếu là CHECKIN, thêm vào đầu
+
+          // Nếu là CHECKIN
+          const newLog = {
+            id: data.log.id,
+            name: data.log.name,
+            role: data.log.role,
+            avatar: data.log.avatar,
+            status: data.log.status === 'LATE' ? 'Late' : 'Present',
+            checkIn: data.log.time,
+            checkInStatus: data.log.status === 'LATE' ? 'Trễ giờ' : 'Đúng giờ',
+            checkOut: '--:--',
+            conf: parseFloat(data.log.conf),
+            type: 'IN'
+          };
+
+          const alreadyIn = prev.some(l => l.id === data.log.id);
+          if (alreadyIn) {
+            return prev.map(l => l.id === data.log.id ? { ...l, ...newLog } : l);
+          }
           return [newLog, ...prev];
         });
+      } else {
+        console.log('❌ Date mismatch, ignoring real-time update.');
       }
     });
 
+    socket.on('connect_error', (err) => {
+      console.error('❌ Socket Connection Error:', err);
+    });
+
     return () => {
+      console.log('🔌 Disconnecting socket...');
       socket.disconnect();
     };
   }, [selectedDate]);
+
 
   // Tải dữ liệu biểu đồ 30 ngày từ API
   useEffect(() => {
@@ -199,15 +245,24 @@ const Attendance = () => {
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className={`inline-flex px-2 py-0.5 rounded text-xs font-bold ${log.status === 'Present' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {log.status === 'Present' ? 'Có mặt' : 'Đến trễ'}
+                        <span className={`inline-flex px-2 py-0.5 rounded text-xs font-bold ${
+                          ['Present', 'ON_TIME'].includes(log.status) ? 'bg-emerald-100 text-emerald-700' : 
+                          ['Early Leave', 'EARLY_LEAVE'].includes(log.status) ? 'bg-blue-100 text-blue-700' : 
+                          'bg-orange-100 text-orange-700'
+                        }`}>
+                          {['Present', 'ON_TIME'].includes(log.status) ? 'Đúng giờ' : 
+                           ['Early Leave', 'EARLY_LEAVE'].includes(log.status) ? 'Về sớm' : 'Trễ giờ'}
                         </span>
                       </td>
                       <td className="p-4">
                         <div className="text-sm font-semibold text-slate-900">{log.checkIn}</div>
-                        <div className={`text-xs ${log.checkInStatus?.includes('+') ? 'text-red-500 font-medium' : 'text-slate-500'}`}>{log.checkInStatus}</div>
+                        <div className={`text-xs ${log.checkInStatus === 'Trễ giờ' ? 'text-red-500 font-medium' : 'text-slate-500'}`}>{log.checkInStatus}</div>
                       </td>
-                      <td className="p-4"><div className="text-sm font-semibold text-slate-900">{log.checkOut}</div></td>
+                      <td className="p-4">
+                        <div className="text-sm font-semibold text-slate-900">{log.checkOut}</div>
+                        {log.checkOut !== '—' && log.checkOut !== '--:--' && (['Early Leave', 'EARLY_LEAVE'].includes(log.status)) && <div className="text-[10px] text-blue-500 font-medium">Về sớm</div>}
+                      </td>
+
                       <td className="p-4">
                         <div className="flex items-center gap-2">
                           <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full" style={{ width: `${log.conf}%` }}></div></div>

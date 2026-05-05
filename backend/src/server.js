@@ -6,11 +6,18 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const http = require('http');
 const { Server } = require('socket.io');
+const fs = require('fs');
+const path = require('path');
+const csv = require('csv-parser');
+const multer = require('multer');
+
+const upload = multer({ dest: 'uploads/' });
 
 dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -80,7 +87,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'BioHR Ba
 // Proxy requests to AI Service (localhost:8000) to avoid needing multiple tunnels
 app.post('/api/v1/extract', async (req, res) => {
   try {
-    const response = await fetch('http://localhost:8000/api/v1/extract', {
+    const response = await fetch(`${AI_SERVICE_URL}/api/v1/extract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body),
@@ -106,7 +113,7 @@ app.post('/api/v1/extract', async (req, res) => {
 
 app.post('/api/v1/liveness-check', async (req, res) => {
   try {
-    const response = await fetch('http://localhost:8000/api/v1/liveness-check', {
+    const response = await fetch(`${AI_SERVICE_URL}/api/v1/liveness-check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body),
@@ -367,6 +374,51 @@ app.delete('/api/employees/:id', adminAuth, async (req, res) => {
   }
 });
 
+// Bulk Import
+app.post('/api/employees/bulk-import', adminAuth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Không tìm thấy file tải lên' });
+
+  const results = [];
+  const errors = [];
+  const filePath = req.file.path;
+
+  fs.createReadStream(filePath)
+    .pipe(csv())
+    .on('data', (data) => results.push(data))
+    .on('end', async () => {
+      try {
+        const departments = await prisma.department.findMany();
+        const deptMap = {};
+        departments.forEach(d => deptMap[d.name.toLowerCase()] = d.id);
+
+        let successCount = 0;
+        for (const row of results) {
+          try {
+            const { employeeCode, fullName, email, phone, department } = row;
+            if (!employeeCode || !fullName) continue;
+
+            const departmentId = deptMap[department?.toLowerCase()] || departments[0]?.id;
+
+            await prisma.employee.upsert({
+              where: { employeeCode },
+              update: { fullName, email, phone, departmentId },
+              create: { employeeCode, fullName, email, phone, departmentId }
+            });
+            successCount++;
+          } catch (e) {
+            errors.push({ row, error: e.message });
+          }
+        }
+
+        fs.unlinkSync(filePath); // Xóa file tạm
+        res.json({ message: `Nhập thành công ${successCount} nhân viên`, errorCount: errors.length, errors });
+      } catch (err) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        res.status(500).json({ error: 'Lỗi xử lý file CSV' });
+      }
+    });
+});
+
 app.put('/api/employees/:id/face', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -435,18 +487,23 @@ app.get('/api/attendance', adminAuth, async (req, res) => {
     const formatted = Object.values(grouped).map(data => {
       const { employee, inLog, outLog, maxConf } = data;
 
+      let status = 'Present'; // Mặc định
+      if (inLog && inLog.status === 'LATE') status = 'Late';
+      if (outLog && outLog.status === 'EARLY_LEAVE') status = 'Early Leave';
+
       return {
-        id: employee.id, // Sử dụng ID nhân viên làm key cho dòng
+        id: employee.id,
         name: employee.fullName,
         role: employee.department.name,
-        status: inLog ? (inLog.status === 'ON_TIME' ? 'Present' : 'Late Arrival') : 'Present',
+        status: status,
         checkIn: inLog ? new Date(inLog.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—',
-        checkInStatus: inLog ? (inLog.status === 'ON_TIME' ? 'Đúng giờ' : 'Trễ') : '—',
+        checkInStatus: inLog ? (inLog.status === 'ON_TIME' ? 'Đúng giờ' : 'Trễ giờ') : '—',
         checkOut: outLog ? new Date(outLog.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—',
         conf: Math.round(maxConf * 100),
         avatar: employee.avatarUrl || 'https://randomuser.me/api/portraits/lego/1.jpg',
       };
     });
+
 
     res.json(formatted);
   } catch (error) {
@@ -469,10 +526,10 @@ app.post('/api/attendance/checkin', async (req, res) => {
     const shifts = await prisma.shift.findMany({ orderBy: { startTime: 'asc' } });
 
     let isLate = false;
+    let assignedShift = null;
 
     if (shifts.length > 0) {
       const currentMin = hour * 60 + minute;
-      let closestShift = shifts[0];
       let minDiff = Infinity;
 
       for (const s of shifts) {
@@ -485,20 +542,23 @@ app.post('/api/attendance/checkin', async (req, res) => {
 
         if (Math.abs(diff) < minDiff) {
           minDiff = Math.abs(diff);
-          closestShift = s;
+          assignedShift = s;
         }
       }
 
-      const [sHr, sMin] = closestShift.startTime.split(':').map(Number);
-      const allowedLate = closestShift.lateAfterMinutes || 0;
-      const startMin = sHr * 60 + sMin;
+      if (assignedShift) {
+        const [sHr, sMin] = assignedShift.startTime.split(':').map(Number);
+        const allowedLate = assignedShift.lateAfterMinutes || 0;
+        const startMin = sHr * 60 + sMin;
 
-      let checkinDiff = currentMin - startMin;
-      if (checkinDiff > 720) checkinDiff -= 1440;
-      else if (checkinDiff < -720) checkinDiff += 1440;
+        let checkinDiff = currentMin - startMin;
+        if (checkinDiff > 720) checkinDiff -= 1440;
+        else if (checkinDiff < -720) checkinDiff += 1440;
 
-      if (checkinDiff > allowedLate) {
-        isLate = true;
+        if (checkinDiff > allowedLate) {
+          isLate = true;
+        }
+        console.log(`📌 IN: Closest Shift: ${assignedShift.name}, Start: ${assignedShift.startTime}, Diff: ${checkinDiff}m, Late: ${isLate}`);
       }
     } else {
       isLate = hour > 8 || (hour === 8 && minute > 0);
@@ -507,7 +567,7 @@ app.post('/api/attendance/checkin', async (req, res) => {
     const log = await prisma.attendanceLog.create({
       data: {
         employeeId,
-        type,
+        type: 'IN',
         status: isLate ? 'LATE' : 'ON_TIME',
         confidenceScore: confidenceScore || 0.99,
         checkTime: checkTime ? new Date(checkTime) : logTime
@@ -515,11 +575,15 @@ app.post('/api/attendance/checkin', async (req, res) => {
       include: { employee: { include: { department: true } } }
     });
 
+
+    console.log(`✅ Điểm danh thành công cho NV: ${log.employee.fullName} - Trạng thái: ${log.status}`);
+
     // Phát tín hiệu real-time
-    req.io.emit('attendanceUpdate', {
+    const socketPayload = {
       type: 'CHECKIN',
       log: {
-        id: log.employee.employeeCode,
+        id: log.employee.id,
+        employeeCode: log.employee.employeeCode,
         name: log.employee.fullName,
         role: log.employee.department.name,
         time: new Date(log.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
@@ -528,9 +592,13 @@ app.post('/api/attendance/checkin', async (req, res) => {
         type: 'IN',
         avatar: log.employee.avatarUrl
       }
-    });
+    };
+
+    console.log('📡 Emitting attendanceUpdate (CHECKIN):', socketPayload.log.name);
+    req.io.emit('attendanceUpdate', socketPayload);
+
     res.json({
-      message: 'Điểm danh thành công!',
+      message: `Điểm danh ${isLate ? 'TRỄ' : 'ĐÚNG GIỜ'} thành công!`,
       log: {
         id: log.id,
         checkTime: log.checkTime,
@@ -540,11 +608,128 @@ app.post('/api/attendance/checkin', async (req, res) => {
         employee: { id: employee.id, fullName: employee.fullName, department: employee.department.name, avatarUrl: employee.avatarUrl }
       }
     });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Lỗi điểm danh' });
   }
 });
+
+app.post('/api/attendance/checkout', async (req, res) => {
+  try {
+    const { employeeId, confidenceScore, checkTime } = req.body;
+    if (!employeeId) return res.status(400).json({ error: 'Thiếu employeeId' });
+
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId }, include: { department: true } });
+    if (!employee) return res.status(404).json({ error: 'Nhân viên không tồn tại' });
+
+    const logTime = checkTime ? new Date(checkTime) : new Date();
+    const hour = logTime.getHours();
+    const minute = logTime.getMinutes();
+
+    // Lấy ca làm việc gần nhất để tính "về sớm"
+    const shifts = await prisma.shift.findMany();
+    let isEarly = false;
+    let assignedShift = null;
+
+    if (shifts.length > 0) {
+      const currentMin = hour * 60 + minute;
+      let minDiff = Infinity;
+
+      for (const s of shifts) {
+        const [eHr, eMin] = s.endTime.split(':').map(Number);
+        const endMin = eHr * 60 + eMin;
+
+        let diff = currentMin - endMin;
+        if (diff > 720) diff -= 1440;
+        else if (diff < -720) diff += 1440;
+
+        if (Math.abs(diff) < minDiff) {
+          minDiff = Math.abs(diff);
+          assignedShift = s;
+        }
+      }
+
+      if (assignedShift) {
+        const [eHr, eMin] = assignedShift.endTime.split(':').map(Number);
+        const endMin = eHr * 60 + eMin;
+        
+        let checkoutDiff = currentMin - endMin;
+        if (checkoutDiff > 720) checkoutDiff -= 1440;
+        else if (checkoutDiff < -720) checkoutDiff += 1440;
+
+        if (checkoutDiff < -5) { // Về sớm hơn 5 phút so với kết thúc ca
+          isEarly = true;
+        }
+        console.log(`📌 OUT: Closest Shift: ${assignedShift.name}, End: ${assignedShift.endTime}, Diff: ${checkoutDiff}m, Early: ${isEarly}`);
+      }
+    }
+
+    const log = await prisma.attendanceLog.create({
+      data: {
+        employeeId,
+        type: 'OUT',
+        status: isEarly ? 'EARLY_LEAVE' : 'ON_TIME',
+        confidenceScore: confidenceScore || 0.99,
+        checkTime: logTime
+      },
+      include: { employee: { include: { department: true } } }
+    });
+
+
+    // Tính thời gian làm việc trong ngày (tùy chọn)
+    const startOfDay = new Date(logTime);
+    startOfDay.setHours(0, 0, 0, 0);
+    const inLog = await prisma.attendanceLog.findFirst({
+      where: { employeeId, type: 'IN', checkTime: { gte: startOfDay, lte: logTime } },
+      orderBy: { checkTime: 'asc' }
+    });
+
+    let workHours = null;
+    if (inLog) {
+      const diffMs = logTime - new Date(inLog.checkTime);
+      workHours = (diffMs / 3600000).toFixed(1);
+    }
+
+    console.log(`✅ Điểm danh RA CA thành công cho NV: ${log.employee.fullName}`);
+
+    // Phát tín hiệu real-time
+    const socketPayload = {
+      type: 'CHECKOUT',
+      log: {
+        id: log.employee.id,
+        employeeCode: log.employee.employeeCode,
+        name: log.employee.fullName,
+        role: log.employee.department.name,
+        time: new Date(log.checkTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        conf: `${((log.confidenceScore || 0.99) * 100).toFixed(1)}%`,
+        status: 'ON_TIME',
+        type: 'OUT',
+        avatar: log.employee.avatarUrl,
+        workHours
+      }
+    };
+
+    console.log('📡 Emitting attendanceUpdate (CHECKOUT):', socketPayload.log.name);
+    req.io.emit('attendanceUpdate', socketPayload);
+
+    res.json({
+      message: 'Điểm danh ra ca thành công!',
+      log: {
+        id: log.id,
+        checkTime: log.checkTime,
+        type: log.type,
+        workHours,
+        employee: { id: employee.id, fullName: employee.fullName, department: employee.department.name, avatarUrl: employee.avatarUrl }
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Lỗi điểm danh ra ca' });
+  }
+});
+
 
 // ─────────── QUICK SCAN (Combine Extract + Identify) ───────────
 app.post('/api/face/quick-scan', async (req, res) => {
@@ -553,7 +738,7 @@ app.post('/api/face/quick-scan', async (req, res) => {
     if (!image_base64) return res.status(400).json({ error: 'Thiếu dữ liệu hình ảnh' });
 
     // 1. Gọi AI Service để trích xuất embedding
-    const aiResponse = await fetch('http://localhost:8000/api/v1/extract', {
+    const aiResponse = await fetch(`${AI_SERVICE_URL}/api/v1/extract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image_base64 }),
@@ -662,13 +847,28 @@ app.post('/api/face/identify', async (req, res) => {
       return dot / (nA * nB);
     };
     let bestMatch = null, bestScore = -1;
+    const scores = [];
     for (const emp of enrolledEmployees) {
-      if (emp.faceEmbedding.length !== embedding.length) continue;
+      if (emp.faceEmbedding.length !== embedding.length) {
+        console.warn(`⚠️ Mismatch embedding length: Request(${embedding.length}) vs DB(${emp.faceEmbedding.length}) for ${emp.fullName}`);
+        continue;
+      }
       const score = cosineSim(embedding, emp.faceEmbedding);
+      scores.push({ name: emp.fullName, score: score.toFixed(4) });
       if (score > bestScore) { bestScore = score; bestMatch = emp; }
     }
+
+    console.log(`📊 Similarity Scores (Length: ${embedding.length}):`, JSON.stringify(scores));
     console.log(`🎯 Best match found: ${bestMatch?.fullName} with score: ${bestScore.toFixed(4)}`);
-    if (bestScore < 0.55 || !bestMatch) return res.json({ matched: false, confidence: +(bestScore * 100).toFixed(1), message: 'Không tìm thấy nhân viên khớp' });
+
+    if (bestScore < 0.45 || !bestMatch) {
+      return res.json({
+        matched: false,
+        confidence: +(bestScore * 100).toFixed(1),
+        message: `Không khớp. Gần giống nhất: ${bestMatch ? bestMatch.fullName : 'N/A'} (${(bestScore * 100).toFixed(1)}%)`
+      });
+    }
+
     res.json({
       matched: true,
       confidence: +(bestScore * 100).toFixed(1),
@@ -853,6 +1053,7 @@ app.get('/api/payroll', authMiddleware, async (req, res) => {
         if (!logsByDay[dateStr]) logsByDay[dateStr] = [];
         logsByDay[dateStr].push(l);
       });
+
 
       for (const [date, dayLogs] of Object.entries(logsByDay)) {
         if (dayLogs.some(l => l.type === 'IN')) daysWorked++;
